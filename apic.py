@@ -3,7 +3,7 @@ import taichi as ti
 import taichi.math as tm
 import numpy as np
 
-ti.init(arch=ti.gpu, debug=True)
+ti.init(arch=ti.gpu, debug=False)
 
 n_particles = 8192
 n_grid = 128
@@ -13,7 +13,7 @@ dt = 2e-4
 p_rho = 1
 p_vol = (dx * 0.5) ** 2
 p_mass = p_vol * p_rho
-gravity = 9.8
+gravity = 0.98
 bound = 3
 river_depth = 0.1
 E = 400
@@ -73,16 +73,17 @@ def substep():
 
         # Inflow
         if i < bound and grid_v[i, j].x < 0:
-            grid_v[i, j].x = 0.0
+            grid_v[i, j].x = 1.0
+        # outflow
         if i > n_grid - bound and grid_v[i, j].x > 0:
-            grid_v[i, j].x = 0.0
+            grid_v[i, j].x = 1.0
         # riverbed boundary
         xi = i * dx
         y_bound, normal = riverbed(xi)
         y_j = int(y_bound * n_grid - 0.5) + 1
-        if j <= y_j and tm.dot(grid_v[i, j], normal) < 0:
-            grid_v[i, j].x = 0
-            grid_v[i, j].y = 0
+        normal_component = tm.dot(grid_v[i, j], normal)
+        if j <= y_j and normal_component < 0:
+            grid_v[i, j] -= normal_component * normal
 
         if j > n_grid - bound and grid_v[i, j].y > 0:
             grid_v[i, j].y = 0
@@ -105,10 +106,11 @@ def substep():
         J[p] *= 1 + dt * new_C.trace()
         C[p] = new_C
 
-        if x[p].x > 1.0 - dx:
+        if x[p].x > 1.0 - 3*dx:
             x[p] = [ti.random()*  3 * dx + dx, ti.random() * river_depth]
-            x[p] += [0.0, riverbed(x[p].x)[0]]
-            v[p] = [1.0, 0]
+            y, normal = riverbed(x[p].x)
+            x[p] += [0.0, y]
+            v[p] = [normal.y, -normal.x]
             J[p] = 1
             C[p] = ti.Matrix.zero(float, 2, 2)
 
