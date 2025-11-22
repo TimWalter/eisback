@@ -6,9 +6,11 @@ import numpy as np
 ti.init(arch=ti.gpu, debug=False)
 
 res_level = 2
-n_particles = 8192 * 4
-n_grid = 128 * res_level
-dx = 1 / n_grid
+n_particles = 8192 * 10
+n_grid = tm.vec2(64 * res_level * 10, 64 * res_level)
+dx = 1 / n_grid.y
+domain_width = n_grid.x * dx
+domain_height = n_grid.y * dx
 dt = 2e-4 / res_level
 
 p_rho = 1
@@ -24,25 +26,31 @@ v = ti.Vector.field(2, float, n_particles)
 C = ti.Matrix.field(2, 2, float, n_particles)
 J = ti.field(float, n_particles)
 
-grid_v = ti.Vector.field(2, float, (n_grid, n_grid))
-grid_m = ti.field(float, (n_grid, n_grid))
+grid_v = ti.Vector.field(2, float, (n_grid.x, n_grid.y))
+grid_m = ti.field(float, (n_grid.x, n_grid.y))
 
-
-gui = ti.GUI("Eisbach", res=(800, 800))
+gui = ti.GUI("Eisbach", res=(3000, 300))
 inflow_rate_slider = gui.slider("inflow_rate", 0.5, 5.0, step=0.1)
-parabola_a_slider = gui.slider("parabola_a", 0.1, 5.0, step=0.1)
-parabola_b_slider = gui.slider("parabola_b", 0.2, 1.0, step=0.01)
-kicker_b_slider = gui.slider("kicker_b", 0.1, 0.6, step=0.01)
+inflow_rate_slider.value = 3.5
+parabola_a_slider = gui.slider("parabola_a", 0.01, 0.5, step=0.01)
+parabola_a_slider.value = 0.01
+parabola_b_slider = gui.slider("parabola_b", 0.2, domain_width, step=0.01)
+parabola_b_slider.value = 3.65
+kicker_b_slider = gui.slider("kicker_b", 0.1, domain_width, step=0.01)
+kicker_b_slider.value = 3.85
 kicker_height_slider = gui.slider("kicker_height", 0.0, 0.5, step=0.01)
+kicker_height_slider.value = 0.05
 kicker_a_slider = gui.slider("kicker_a", -100.0, -10.0, step=1.0)
+kicker_a_slider.value = -18.0
+
+parabola_end_slider = gui.slider("parabola_end", 0.0, domain_width, step=1.0)
+parabola_end_slider.value = 0.8 * domain_width
 
 parabola_c = 3 * dx
-ground_transition_x = 0.7
-
 
 
 @ti.func
-def riverbed(x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a):
+def riverbed(x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a, parabola_end):
     """Returns the y-coordinate of the riverbed at position x, and the normal vector."""
     kicker_c = parabola_a * (kicker_b - parabola_b) ** 2 + 3 * dx + kicker_height
     A = kicker_a - parabola_a
@@ -51,7 +59,7 @@ def riverbed(x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a):
 
     kicker_start = (-B + ti.sqrt(B ** 2 - 4 * A * D)) / (2 * A)
     kicker_end = (-B - ti.sqrt(B ** 2 - 4 * A * D)) / (2 * A)
-    ground_transition_y = parabola_a * (ground_transition_x - parabola_b) ** 2 + 3 * dx
+    ground_transition_y = parabola_a * (parabola_end - parabola_b) ** 2 + 3 * dx
 
     y = ground_transition_y
     normal = tm.vec2(0, 1)
@@ -62,7 +70,7 @@ def riverbed(x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a):
         normal = tm.vec2(-dy_dx, 1)
 
         normal /= tm.length(normal)
-    elif x < ground_transition_x:
+    elif x < parabola_end:
         y = parabola_a * (x - parabola_b) ** 2 + parabola_c
         # Normal vector calculation
         dy_dx = 2 * parabola_a * (x - parabola_b)
@@ -77,7 +85,8 @@ def riverbed(x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a):
 
 
 @ti.kernel
-def substep(inflow: float, parabola_a: float, parabola_b: float, kicker_b: float, kicker_height: float, kicker_a: float):
+def substep(inflow: float, parabola_a: float, parabola_b: float, kicker_b: float, kicker_height: float,
+            kicker_a: float, parabola_end: float):
     for i, j in grid_m:
         grid_v[i, j] = [0, 0]
         grid_m[i, j] = 0
@@ -103,17 +112,17 @@ def substep(inflow: float, parabola_a: float, parabola_b: float, kicker_b: float
         if i < bound and grid_v[i, j].x < 0:
             grid_v[i, j].x = inflow
         # outflow
-        if i > n_grid - bound and grid_v[i, j].x > 0:
+        if i > n_grid.x - bound and grid_v[i, j].x > 0:
             grid_v[i, j].x = inflow
         # riverbed boundary
         xi = i * dx
-        y_bound, normal = riverbed(xi, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a)
-        y_j = int(y_bound * n_grid - 0.5) + 1
+        y_bound, normal = riverbed(xi, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a, parabola_end)
+        y_j = int(y_bound * n_grid.y - 0.5) + 1
         normal_component = tm.dot(grid_v[i, j], normal)
         if j <= y_j and normal_component < 0:
             grid_v[i, j] -= normal_component * normal
 
-        if j > n_grid - bound and grid_v[i, j].y > 0:
+        if j > n_grid.y - bound and grid_v[i, j].y > 0:
             grid_v[i, j].y = 0
     for p in x:
         Xp = x[p] / dx
@@ -135,46 +144,57 @@ def substep(inflow: float, parabola_a: float, parabola_b: float, kicker_b: float
         C[p] = new_C
 
         # if the particle goes out of bounds, respawn it at the left side
-        y, normal = riverbed(x[p].x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a)
-        if x[p].x > 1.0 - 3 * dx or x[p].x < dx or x[p].y < y or x[p].y > 1.0 - 3 * dx:
+        y, normal = riverbed(x[p].x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a, parabola_end)
+        if x[p].x > domain_width - 3 * dx or x[p].x < dx or x[p].y < y or x[p].y > domain_height - 3 * dx:
             x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth]
             x[p] += [0.0, y]
-            v[p] = [normal.y * 2, -normal.x]
+            v[p] = [normal.y, -normal.x]
+            v[p] *= inflow
             J[p] = 1
             C[p] = ti.Matrix.zero(float, 2, 2)
 
 
-riverbed_x = ti.field(float, int(n_grid * 4))
-riverbed_x.from_numpy(np.linspace(0.0, 1.0, int(n_grid * 4), dtype=np.float32))
-riverbed_y = ti.field(float, int(n_grid * 4))
+riverbed_x = ti.field(float, int(n_grid.x * 4))
+riverbed_x.from_numpy(np.linspace(0.0, domain_width, int(n_grid.x * 4), dtype=np.float32))
+riverbed_y = ti.field(float, int(n_grid.x * 4))
 
 
 @ti.kernel
-def precompute_riverbed_points(parabola_a: float, parabola_b: float, kicker_b: float, kicker_height: float, kicker_a: float):
-    for i in range(int(n_grid * 4)):
+def precompute_riverbed_points(parabola_a: float, parabola_b: float, kicker_b: float, kicker_height: float,
+                               kicker_a: float, parabola_end: float):
+    for i in range(int(n_grid.x * 4)):
         rx = riverbed_x[i]
-        riverbed_y[i] = riverbed(rx, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a)[0]
+        riverbed_y[i] = riverbed(rx, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a, parabola_end)[0]
 
 
 @ti.kernel
-def init(parabola_a:float, parabola_b:float, kicker_b:float, kicker_height:float, kicker_a:float):
+def init(parabola_a: float, parabola_b: float, kicker_b: float, kicker_height: float, kicker_a: float, parabola_end:float):
     for p in range(n_particles):
-        x[p] = [ti.random() * 0.9 + 3 * dx, ti.random() * river_depth]
-        y, normal = riverbed(x[p].x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a)
+        x[p] = [ti.random() * 0.95 * domain_width + 3 * dx, ti.random() * river_depth]
+        y, normal = riverbed(x[p].x, parabola_a, parabola_b, kicker_b, kicker_height, kicker_a, parabola_end)
         x[p] += [0.0, y]
         v[p] = [normal.y * 2, -normal.x]
         J[p] = 1
         C[p] = ti.Matrix.zero(float, 2, 2)
 
 
-init(parabola_a_slider.value, parabola_b_slider.value, kicker_b_slider.value, kicker_height_slider.value, kicker_a_slider.value)
+init(parabola_a_slider.value, parabola_b_slider.value, kicker_b_slider.value, kicker_height_slider.value,
+     kicker_a_slider.value, parabola_end_slider.value)
 
 while gui.running and not gui.get_event(gui.ESCAPE):
     for s in range(50 * res_level):
-        substep(inflow_rate_slider.value, parabola_a_slider.value, parabola_b_slider.value, kicker_b_slider.value, kicker_height_slider.value, kicker_a_slider.value)
-    precompute_riverbed_points(parabola_a_slider.value, parabola_b_slider.value, kicker_b_slider.value, kicker_height_slider.value, kicker_a_slider.value)
-    riverbed_points = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=1)
+        substep(inflow_rate_slider.value, parabola_a_slider.value, parabola_b_slider.value, kicker_b_slider.value,
+                kicker_height_slider.value, kicker_a_slider.value, parabola_end_slider.value)
+    precompute_riverbed_points(parabola_a_slider.value, parabola_b_slider.value, kicker_b_slider.value,
+                               kicker_height_slider.value, kicker_a_slider.value, parabola_end_slider.value)
+    riverbed_vis = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=1)
+    riverbed_vis[:, 0] /= domain_width
+    riverbed_vis[:, 1] /= domain_height
+
+    particle_vis = x.to_numpy()
+    particle_vis[:, 0] /= domain_width
+    particle_vis[:, 1] /= domain_height
     gui.clear(0x112F41)
-    gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
-    gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
+    gui.circles(riverbed_vis, radius=2.0, color=0xED553B)  # Draw riverbed
+    gui.circles(particle_vis, radius=1.5, color=0x068587)
     gui.show()
