@@ -5,18 +5,20 @@ ti.init(arch=ti.gpu, debug=True)
 
 # system params
 n_particles = 8192
-domain_x = 1
-domain.y = 1
-gravity = 1
+domain_x = 10
+domain.y = 5
+gravity = 9.81
 
 # floor
-parabola_a = 0.5
+parabola_a = 2
 parabola_c = 0.1
-deepest_point_x = 0.4
-ground_transition_y = 0.1 + parabola_c
+deepest_point_x = 4
+ground_transition_y = 1 
 
 # water params
 viscosity = 1
+rho0 = 1000 # kg/m^3
+c0 = 50 # [m/s] speed of sound in (our) water 
 interaction_radius = 0.1
 interaction_radius_sq = interaction_radius ** 2
 mass = 1 
@@ -26,6 +28,11 @@ h = interaction_radius
 h_sq = h * h
 POLY6_2D_CONST = 4.0 / (math.pi * h**8)  # Poly6 (Density): 4 / (pi * h^8)
 SPIKY_GRAD_2D_CONST = -30.0 / (math.pi * h**5)  # Spiky (Gradient): -30 / (pi * h^5)
+
+# tait pressure
+gamma = 7 
+B = c0*c0*rho0/gamma
+
 
 # particle data
 x = ti.Vector.field(2, float, n_particles) # positions
@@ -53,6 +60,8 @@ def tait_pressure(rho, rho0, c0, gamma):
     B = c0 * c0 * rho0 / gamma
     return B * ((rho / rho0)**gamma - 1.0)
 
+
+# standard density estimation kernel 
 @ti.func
 def poly6_value(r_sq, h_sq):
     result = 0.0
@@ -62,6 +71,7 @@ def poly6_value(r_sq, h_sq):
         result = POLY6_2D_CONST * diff * diff * diff
     return result
 
+# pressure force gradient for pair wise force calculations
 @ti.func
 def spiky_gradient(r, r_len, h):
     res = ti.Vector([0.0, 0.0])
@@ -77,9 +87,17 @@ def spiky_gradient(r, r_len, h):
         res = r * (grad_mag / r_len)
     return res
 
-@ti.kernel
-def substep():
 
+# convert desnity to pressure 
+@ti.func
+def tait_pressure(rho, rho0, c0, gamma):
+    B = c0 * c0 * rho0 / gamma
+    return B * ((rho / rho0)**gamma - 1.0)
+
+
+
+@ti.kernel
+def force_update():
     # 1. pass: density calcualtion
     for i in x:
         d[i] = 0.0
@@ -94,12 +112,22 @@ def substep():
 
     # 2. pass: force calculation
     for i in x:
+        p[i] = tait_pressure(d[i], rho0, gamma, B)
         f[i] = ti.Vector([0.0, -gravity])
-        
-        # simplified tait equation
-        stiffness = 500.0 
-        rest_density = 1.0 # Assuming 1 for simplicity
-        p[i] = stiffness * (d[i] - rest_density)
+
+        for j in x:
+            r = x[i] - x[j]
+            r_len = r.norm()
+
+            if 0 < r_len < interaction_radius:
+
+                pressure_term = (p[i] / (d[i]**2)) + (p[j] / (d[j]**2))
+                f_pressure = -mass * pressure_term * spiky_gradient(r, r_len, interaction_radius)
+
+                f[i] += f_pressure
+
+
+
 
 
 # 2. Compute Forces (The Pairwise Interaction)
