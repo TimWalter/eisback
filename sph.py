@@ -125,7 +125,7 @@ def init():
         for j in range(particles_y):
 
             x[i * particles_y + j] = [i * dx, j * dx]
-            v[i * particles_y + j] = [0.01 * (ti.random() - 0.5), 0.01 * (ti.random() - 0.5) + 1]
+            v[i * particles_y + j] = [0.01 * (ti.random() - 0.5 + 5), 0.01 * (ti.random() - 0.5) + 1]
 
 
     # for p in range(n_particles):
