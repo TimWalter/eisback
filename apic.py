@@ -3,7 +3,7 @@ import taichi as ti
 import taichi.math as tm
 import numpy as np
 
-ti.init(arch=ti.gpu, debug=True)
+ti.init(arch=ti.gpu, debug=False)
 
 res_level = 2
 n_particles = 8192
@@ -32,25 +32,28 @@ gui = ti.GUI("Eisbach")
 inflow_rate_slider = gui.slider("inflow_rate", 0.5, 5.0, step=0.1)
 parabola_a_slider = gui.slider("parabola_a", 0.1, 3.0, step=0.01)
 deepest_point_x_slider = gui.slider("deepest_point_x", 0.2, 1.0, step=0.01)
-ground_transition_y_slider = gui.slider("ground_transition_y", 0.1, 0.5, step=0.01)
+ground_transition_y_slider = gui.slider("ground_transition_x", 0.3, 1.0, step=0.01)
 
 
 @ti.func
-def riverbed(x, a, deepest_x, transition_y):
+def riverbed(x, a, deepest_x, ground_transition_x):
     """Returns the y-coordinate of the riverbed at position x, and the normal vector."""
     # Parabolic riverbed profile
-    c = dx * 4
-    y = a * (x - deepest_x) ** 2
-    y = ti.min(y, transition_y) + c
-    # Normal vector calculation
-    dy_dx = 2 * a * (x - deepest_x)
-    normal = tm.vec2(-dy_dx, 1)
-    normal /= tm.length(normal)
+    c = dx * 3
+    transition_y = a * (ground_transition_x - deepest_x) ** 2 + c
+    y = transition_y
 
-    if y <= transition_y + c:
+    normal = tm.vec2(0, 1)
+    if x < ground_transition_x:
+        y = a * (x - deepest_x) ** 2 + c
+        # Normal vector calculation
+        dy_dx = 2 * a * (x - deepest_x)
+        normal = tm.vec2(-dy_dx, 1)
+
+        normal /= tm.length(normal)
+    else:
+        y = transition_y
         normal = tm.vec2(0, 1)
-
-
     return y, normal
 
 
