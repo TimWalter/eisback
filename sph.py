@@ -9,10 +9,12 @@ ti.init(arch=ti.gpu)
 
 
 # system params
-n_particles = 10000
+particles_x = 100
+particles_y = 150
+n_particles = particles_x * particles_y
 domain_x = 10
-domain_y = 5
-gravity = 9.81 * 100
+domain_y = 10
+gravity = 9.81 * 5
 dt = 1e-4
 
 
@@ -27,11 +29,11 @@ ground_transition_y = 1
 particle_radius = 0.01
 particle_diameter = 2 * particle_radius
 dx = particle_diameter
-viscosity_mu = 0.00000001
+viscosity_mu = 0.005
 
 rho0 = 1000 # kg/m^3
-c0 = 40 # [m/s] speed of sound in (our) water 
-interaction_radius = dx * 4.0
+c0 = 80 # [m/s] speed of sound in (our) water 
+interaction_radius = dx * 2.5
 interaction_radius_sq = interaction_radius ** 2
 mass = dx * dx * rho0
 
@@ -107,12 +109,27 @@ def tait_pressure(rho, rho0, c0, gamma, B):
     return B * ((rho / rho0)**gamma - 1.0)
 
 
+@ti.func
+def viscosity_laplacian(r, h):
+    # Müller 2003 Viscosity Kernel Laplacian
+    # ∇²W(r) = (45 / (π * h^6)) * (h - r)
+    res = 0.0
+    if r < h:
+        res = (45.0 / (math.pi * h**6)) * (h - r)
+    return res
 
 
 @ti.kernel
 def init():
-    for p in range(n_particles):
-        x[p] = [ti.random() * domain_x / 5, ti.random() * domain_y / 2] 
+    for i in range(particles_x):
+        for j in range(particles_y):
+
+            x[i * particles_y + j] = [i * dx, j * dx]
+            v[i * particles_y + j] = [0.01 * (ti.random() - 0.5), 0.01 * (ti.random() - 0.5) + 1]
+
+
+    # for p in range(n_particles):
+    #     x[p] = [ti.random() * domain_x / 5, ti.random() * domain_y / 2 ] 
         # x[p] += [0.0, riverbed(x[p].x)[0]]
         # v[p] = [1.0, 0]
         # J[p] = 1
@@ -160,25 +177,26 @@ def force_update():
                 f[i] += f_pressure
 
                 # Viscosity Force
-                v_ij = v[j] - v[i]
-                r_vec = x[i] - x[j]
-                if v_ij.dot(r_vec) < 0:
-                    f_visc = mass * mass * viscosity_mu * v_ij * POLY6_2D_CONST
-                    f[i] += f_visc
+                v_rel = v[j] - v[i]
+                f_viscosity = viscosity_mu * mass * (v_rel / d[j]) * viscosity_laplacian(r_len, h)
+                f[i] += f_viscosity
 
 
 @ti.kernel
 def apply_boundary_conditions():
     for i in range(n_particles):
         if x[i][0] < 0: 
-            x[i][0] = 0
-            v[i][0] = - v[i][0]
-        if x[i][0] > domain_x:
             x[i][0] = domain_x
-            v[i][0] = - v[i][0]
+            # v[i][0] = - v[i][0]
+            # v[i][1] *=0.9 
+        if x[i][0] > domain_x:
+            x[i][0] = 0
+            # v[i][0] = - v[i][0]
+            # v[i][1] *=0.9 
         if x[i][1] < 0:
             x[i][1] = 0
             v[i][1] = -v[i][1]
+            # v[i][0] *=0.9 
 
 
 @ti.kernel
