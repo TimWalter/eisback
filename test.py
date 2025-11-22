@@ -25,7 +25,7 @@ ground_transition_y = 0.1
 # X-point at which the riverbed transitions to flat
 transition_to_flat = 1 / 2
 
-E = 10
+E = 400
 
 # Positions
 x = ti.Vector.field(2, float, n_particles)
@@ -37,12 +37,13 @@ J = ti.field(float, n_particles)
 grid_v = ti.Vector.field(2, float, (n_grid.x + 2, n_grid.y + 2))
 grid_m = ti.field(float, (n_grid.x + 2, n_grid.y + 2))
 
+
 @ti.func
 def riverbed(x):
     """Returns the y-coordinate of the riverbed at position x, and the normal vector."""
     # Parabolic riverbed profile
     y = parabola_a * (x - deepest_point_x) ** 2
-    y = ti.min(y, ground_transition_y)
+    y = ti.min(y, ground_transition_y) + dp.y * 3
     # Normal vector calculation
     dy_dx = 2 * parabola_a * (x - deepest_point_x) + dp.y
     normal = tm.vec2(-dy_dx, 1)
@@ -58,26 +59,29 @@ def substep():
         grid_v[i, j] = [0, 0]
         grid_m[i, j] = 0
     for p in x:
-        if x[p].x < 0.0 or x[p].x >= (1.0-dp.x):
+
+        if x[p].x < 0.0 or x[p].x >= (1.0 - dp.x):
             x[p] = [ti.random() * source_thickness, ti.random() * river_depth]
-            x[p] += [0.0, 0.5+ riverbed(x[p].x)[0]]
+            x[p] += [0.0, riverbed(x[p].x)[0]]
             v[p] = [0.5, 0]
             J[p] = 1
             C[p] = ti.Matrix.zero(float, 2, 2)
 
         y_bound_lower, normal = riverbed(x[p].x)
         if x[p].y < y_bound_lower:
-            x[p].y = y_bound_lower
-            v[p] = [v[p].x,0.]
-            #v_normal = v[p].dot(normal) * normal
-            #v_tangent = v[p] - v_normal
-            #v[p] = v_tangent - 0.5 * v_normal  # simple restitution
+            # elastic reflection
+            v[p] = v[p] - 2 * v[p].dot(normal) * normal
+            x_ground = tm.vec2(x[p].x, y_bound_lower)
+            leftover_speed = tm.length(v[p]) * dt - tm.length(x[p] - x_ground)
+            x[p] = x_ground + v[p] / tm.length(v[p]) * leftover_speed
+            J[p] = 1.0
+            C[p] = ti.Matrix.zero(float, 2, 2)
         if x[p].y >= (1.0 - dp.y):
             x[p].y = 1.0 - dp.y
             v[p].y = tm.min(0, v[p].y)
 
         Xp = x[p] / dp
-        base = int(Xp - 0.5) # round (Xp - 1), such that the kernel centred at 0
+        base = int(Xp - 0.5)  # round (Xp - 1), such that the kernel centred at 0
         fx = Xp - base
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
         stress = -dt * 4 * E * p_vol * (J[p] - 1) / cell_area
@@ -86,8 +90,8 @@ def substep():
             offset = ti.Vector([i, j])
             dpos = (offset - fx) * dp
             weight = w[i].x * w[j].y
-            grid_v[base+1 + offset] += weight * (p_mass * v[p] + affine @ dpos)
-            grid_m[base+1 + offset] += weight * p_mass
+            grid_v[base + 1 + offset] += weight * (p_mass * v[p] + affine @ dpos)
+            grid_m[base + 1 + offset] += weight * p_mass
 
     for i, j in grid_m:
         if grid_m[i, j] > 0:
@@ -104,15 +108,13 @@ def substep():
             offset = ti.Vector([i, j])
             dpos = (offset - fx) * dp
             weight = w[i].x * w[j].y
-            g_v = grid_v[base+1 + offset]
+            g_v = grid_v[base + 1 + offset]
             new_v += weight * g_v
             new_C += 4 * weight * g_v.outer_product(dpos) / cell_area
         v[p] = new_v
         x[p] += dt * v[p]
         J[p] *= 1 + dt * new_C.trace()
         C[p] = new_C
-
-
 
 
 @ti.kernel
@@ -124,25 +126,29 @@ def init():
         J[p] = 1
         C[p] = ti.Matrix.zero(float, 2, 2)
 
+
 riverbed_x = ti.field(float, int(n_grid.x * 4))
 riverbed_x.from_numpy(np.linspace(0.0, 1.0, int(n_grid.x * 4), dtype=np.float32))
 riverbed_y = ti.field(float, int(n_grid.x * 4))
+
+
 @ti.kernel
 def precompute_riverbed_points():
     for i in range(int(n_grid.x * 4)):
         rx = riverbed_x[i]
         riverbed_y[i] = riverbed(rx)[0]
 
+
 init()
 precompute_riverbed_points()
 riverbed_points = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=1)
 
-gui = ti.GUI("MPM88")
-gui2 = ti.GUI("Mass", res=(int(n_grid.x)+2, int(n_grid.y)+2))
-gui3 = ti.GUI("Velocity", res=(int(n_grid.x)+2, int(n_grid.y)+2))
+gui = ti.GUI("MPM88", (1280, 1280))
+gui2 = ti.GUI("Mass", res=(int(n_grid.x) + 2, int(n_grid.y) + 2))
+gui3 = ti.GUI("Velocity", res=(int(n_grid.x) + 2, int(n_grid.y) + 2))
 toggle = True
 while gui.running and not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
-    if gui.is_pressed(ti.GUI.SPACE) and toggle:
+    if gui.is_pressed(ti.GUI.SPACE):
         toggle = False
         for s in range(10):
             substep()
@@ -156,8 +162,7 @@ while gui.running and not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
     if not gui.is_pressed(ti.GUI.SPACE):
         toggle = True
     gui.clear(0x000000)
-    gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
-
     gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
+    gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
 
     gui.show()
