@@ -26,10 +26,10 @@ J = ti.field(float, n_particles)
 grid_v = ti.Vector.field(2, float, (n_grid, n_grid))
 grid_m = ti.field(float, (n_grid, n_grid))
 
-
 parabola_a = 0.5
 deepest_point_x = 0.4
 ground_transition_y = 0.1
+
 
 @ti.func
 def riverbed(x):
@@ -48,6 +48,7 @@ def riverbed(x):
 
     return y, normal
 
+
 @ti.kernel
 def substep():
     for i, j in grid_m:
@@ -58,7 +59,7 @@ def substep():
         base = int(Xp - 0.5)
         fx = Xp - base
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
-        stress = -dt * 4 * E * p_vol * (J[p] - 1) / dx**2
+        stress = -dt * 4 * E * p_vol * (J[p] - 1) / dx ** 2
         affine = ti.Matrix([[stress, 0], [0, stress]]) + p_mass * C[p]
         for i, j in ti.static(ti.ndrange(3, 3)):
             offset = ti.Vector([i, j])
@@ -100,14 +101,14 @@ def substep():
             weight = w[i].x * w[j].y
             g_v = grid_v[base + offset]
             new_v += weight * g_v
-            new_C += 4 * weight * g_v.outer_product(dpos) / dx**2
+            new_C += 4 * weight * g_v.outer_product(dpos) / dx ** 2
         v[p] = new_v
         x[p] += dt * v[p]
         J[p] *= 1 + dt * new_C.trace()
         C[p] = new_C
 
-        if x[p].x > 1.0 - 3*dx:
-            x[p] = [ti.random()*  3 * dx + dx, ti.random() * river_depth]
+        if x[p].x > 1.0 - 3 * dx:
+            x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth]
             y, normal = riverbed(x[p].x)
             x[p] += [0.0, y]
             v[p] = [normal.y, -normal.x]
@@ -118,6 +119,8 @@ def substep():
 riverbed_x = ti.field(float, int(n_grid * 4))
 riverbed_x.from_numpy(np.linspace(0.0, 1.0, int(n_grid * 4), dtype=np.float32))
 riverbed_y = ti.field(float, int(n_grid * 4))
+
+
 @ti.kernel
 def precompute_riverbed_points():
     for i in range(int(n_grid * 4)):
@@ -125,14 +128,13 @@ def precompute_riverbed_points():
         riverbed_y[i] = riverbed(rx)[0]
 
 
-
-
 @ti.kernel
 def init():
     for p in range(n_particles):
-        x[p] = [ti.random() * 0.9 + 3*dx, ti.random() * river_depth]
-        x[p] += [0.0, riverbed(x[p].x)[0]]
-        v[p] = [1.0, 0]
+        x[p] = [ti.random() * 0.9 + 3 * dx, ti.random() * river_depth]
+        y, normal = riverbed(x[p].x)
+        x[p] += [0.0, y]
+        v[p] = [normal.y, -normal.x]
         J[p] = 1
         C[p] = ti.Matrix.zero(float, 2, 2)
 
