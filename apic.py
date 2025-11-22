@@ -56,73 +56,73 @@ def riverbed(x, a, deepest_x, transition_y):
 
 @ti.kernel
 def substep(inflow:float, parabola_a: float, deepest_point_x: float, ground_transition_y: float):
-    for _ in ti.static(ti.ndrange(50)):
-        for i, j in grid_m:
-            grid_v[i, j] = [0, 0]
-            grid_m[i, j] = 0
-        for p in x:
-            Xp = x[p] / dx
-            base = int(Xp - 0.5)
-            fx = Xp - base
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
-            stress = -dt * 4 * E * p_vol * (J[p] - 1) / dx ** 2
-            affine = ti.Matrix([[stress, 0], [0, stress]]) + p_mass * C[p]
-            for i, j in ti.static(ti.ndrange(3, 3)):
-                offset = ti.Vector([i, j])
-                dpos = (offset - fx) * dx
-                weight = w[i].x * w[j].y
-                grid_v[base + offset] += weight * (p_mass * v[p] + affine @ dpos)
-                grid_m[base + offset] += weight * p_mass
-        for i, j in grid_m:
-            if grid_m[i, j] > 0:
-                grid_v[i, j] /= grid_m[i, j]
-            grid_v[i, j].y -= dt * gravity
+    # for _ in ti.static(ti.ndrange(50)):
+    for i, j in grid_m:
+        grid_v[i, j] = [0, 0]
+        grid_m[i, j] = 0
+    for p in x:
+        Xp = x[p] / dx
+        base = int(Xp - 0.5)
+        fx = Xp - base
+        w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
+        stress = -dt * 4 * E * p_vol * (J[p] - 1) / dx ** 2
+        affine = ti.Matrix([[stress, 0], [0, stress]]) + p_mass * C[p]
+        for i, j in ti.static(ti.ndrange(3, 3)):
+            offset = ti.Vector([i, j])
+            dpos = (offset - fx) * dx
+            weight = w[i].x * w[j].y
+            grid_v[base + offset] += weight * (p_mass * v[p] + affine @ dpos)
+            grid_m[base + offset] += weight * p_mass
+    for i, j in grid_m:
+        if grid_m[i, j] > 0:
+            grid_v[i, j] /= grid_m[i, j]
+        grid_v[i, j].y -= dt * gravity
 
-            # Inflow
-            if i < bound and grid_v[i, j].x < 0:
-                grid_v[i, j].x = inflow
-            # outflow
-            if i > n_grid - bound and grid_v[i, j].x > 0:
-                grid_v[i, j].x = inflow
+        # Inflow
+        if i < bound and grid_v[i, j].x < 0:
+            grid_v[i, j].x = inflow
+        # outflow
+        if i > n_grid - bound and grid_v[i, j].x > 0:
+            grid_v[i, j].x = inflow
 
-            # riverbed boundary
-            xi = i * dx
-            y_bound, normal = riverbed(xi, parabola_a, deepest_point_x, ground_transition_y)
-            y_j = int(y_bound * n_grid - 0.5) + 1
-            normal_component = tm.dot(grid_v[i, j], normal)
-            if j <= y_j and normal_component < 0:
-                grid_v[i, j] -= normal_component * normal
+        # riverbed boundary
+        xi = i * dx
+        y_bound, normal = riverbed(xi, parabola_a, deepest_point_x, ground_transition_y)
+        y_j = int(y_bound * n_grid - 0.5) + 1
+        normal_component = tm.dot(grid_v[i, j], normal)
+        if j <= y_j and normal_component < 0:
+            grid_v[i, j] -= normal_component * normal
 
-            if j > n_grid - bound and grid_v[i, j].y > 0:
-                grid_v[i, j].y = 0
-        for p in x:
-            Xp = x[p] / dx
-            base = int(Xp - 0.5)
-            fx = Xp - base
-            w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
-            new_v = ti.Vector.zero(float, 2)
-            new_C = ti.Matrix.zero(float, 2, 2)
-            for i, j in ti.static(ti.ndrange(3, 3)):
-                offset = ti.Vector([i, j])
-                dpos = (offset - fx) * dx
-                weight = w[i].x * w[j].y
-                g_v = grid_v[base + offset]
-                new_v += weight * g_v
-                new_C += 4 * weight * g_v.outer_product(dpos) / dx ** 2
-            v[p] = new_v
-            x[p] += dt * v[p]
-            J[p] *= 1 + dt * new_C.trace()
-            C[p] = new_C
+        if j > n_grid - bound and grid_v[i, j].y > 0:
+            grid_v[i, j].y = 0
+    for p in x:
+        Xp = x[p] / dx
+        base = int(Xp - 0.5)
+        fx = Xp - base
+        w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
+        new_v = ti.Vector.zero(float, 2)
+        new_C = ti.Matrix.zero(float, 2, 2)
+        for i, j in ti.static(ti.ndrange(3, 3)):
+            offset = ti.Vector([i, j])
+            dpos = (offset - fx) * dx
+            weight = w[i].x * w[j].y
+            g_v = grid_v[base + offset]
+            new_v += weight * g_v
+            new_C += 4 * weight * g_v.outer_product(dpos) / dx ** 2
+        v[p] = new_v
+        x[p] += dt * v[p]
+        J[p] *= 1 + dt * new_C.trace()
+        C[p] = new_C
 
-            if x[p].x > 1.0 - 3 * dx:
-                x[p] = [ti.random() * 2 * dx + dx, ti.random() * river_depth]
-                y, normal = riverbed(
-                    x[p].x, parabola_a, deepest_point_x, ground_transition_y
-                )
-                x[p] += [0.0, y]
-                v[p] = inflow*tm.vec2(normal.y, -normal.x)
-                J[p] = 1
-                C[p] = ti.Matrix.zero(float, 2, 2)
+        if x[p].x > 1.0 - 3 * dx:
+            x[p] = [ti.random() * 2 * dx + dx, ti.random() * river_depth]
+            y, normal = riverbed(
+                x[p].x, parabola_a, deepest_point_x, ground_transition_y
+            )
+            x[p] += [0.0, y]
+            v[p] = inflow*tm.vec2(normal.y, -normal.x)
+            J[p] = 1
+            C[p] = ti.Matrix.zero(float, 2, 2)
 
 
 riverbed_x = ti.field(float, int(n_grid * 4))
@@ -167,12 +167,13 @@ while gui.running and not gui.get_event(gui.ESCAPE):
             deepest_point_x_slider.value,
             ground_transition_y_slider.value,)
     riverbed_points = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=1)
-    substep(
-        inflow_rate_slider.value,
-        parabola_a_slider.value,
-        deepest_point_x_slider.value,
-        ground_transition_y_slider.value,
-    )
+    for _ in range(50):
+        substep(
+            inflow_rate_slider.value,
+            parabola_a_slider.value,
+            deepest_point_x_slider.value,
+            ground_transition_y_slider.value,
+        )
     gui.clear(0x112F41)
     gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
     gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
