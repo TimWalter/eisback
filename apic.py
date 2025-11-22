@@ -3,10 +3,10 @@ import taichi as ti
 import taichi.math as tm
 import numpy as np
 
-ti.init(arch=ti.gpu, debug=True)
+ti.init(arch=ti.gpu, debug=False)
 
 res_level = 2
-n_particles = 8192
+n_particles = 8192 * 4
 n_grid = 128 * res_level
 dx = 1 / n_grid
 dt = 2e-4 / res_level
@@ -14,7 +14,7 @@ dt = 2e-4 / res_level
 p_rho = 1
 p_vol = (dx * 0.5) ** 2
 p_mass = p_vol * p_rho
-gravity = 0.98
+gravity = 9.8
 bound = 3
 river_depth = 0.1
 E = 400
@@ -28,26 +28,47 @@ grid_v = ti.Vector.field(2, float, (n_grid, n_grid))
 grid_m = ti.field(float, (n_grid, n_grid))
 
 parabola_a = 2.5
-deepest_point_x = 0.4
+parabola_b = 0.4
+parabola_c = 3 * dx
+
+kicker_b = 0.35
+kicker_a = -40.0
+kicker_height = 0.1
+kicker_c = parabola_a * (kicker_b - parabola_b) ** 2 + 3 * dx + kicker_height
+
+A = kicker_a - parabola_a
+B = 2 * (parabola_a * parabola_b - kicker_a * kicker_b)
+D = (kicker_a * kicker_b ** 2 - parabola_a * parabola_b ** 2 + kicker_c - parabola_c)
+
+kicker_start = (-B + ti.sqrt(B ** 2 - 4 * A * D)) / (2 * A)
+kicker_end = (-B - ti.sqrt(B ** 2 - 4 * A * D)) / (2 * A)
+
 ground_transition_x = 0.7
-ground_transition_y = parabola_a * (ground_transition_x - deepest_point_x) ** 2 + 3 * dx
+ground_transition_y = parabola_a * (ground_transition_x - parabola_b) ** 2 + 3 * dx
+
 
 @ti.func
 def riverbed(x):
     """Returns the y-coordinate of the riverbed at position x, and the normal vector."""
     y = ground_transition_y
     normal = tm.vec2(0, 1)
-    if x < ground_transition_x:
-        y = parabola_a * (x - deepest_point_x) ** 2 + 3 * dx
+    if x > kicker_start and x < kicker_end:
+        y = kicker_a * (x - kicker_b) ** 2 + kicker_c
         # Normal vector calculation
-        dy_dx = 2 * parabola_a * (x - deepest_point_x)
+        dy_dx = 2 * kicker_a * (x - kicker_b)
+        normal = tm.vec2(-dy_dx, 1)
+
+        normal /= tm.length(normal)
+    elif x < ground_transition_x:
+        y = parabola_a * (x - parabola_b) ** 2 + parabola_c
+        # Normal vector calculation
+        dy_dx = 2 * parabola_a * (x - parabola_b)
         normal = tm.vec2(-dy_dx, 1)
 
         normal /= tm.length(normal)
     else:
         y = ground_transition_y
         normal = tm.vec2(0, 1)
-
 
     return y, normal
 
@@ -110,11 +131,12 @@ def substep():
         J[p] *= 1 + dt * new_C.trace()
         C[p] = new_C
 
-        if x[p].x > 1.0 - 3 * dx:
+        # if the particle goes out of bounds, respawn it at the left side
+        if x[p].x > 1.0 - 3 * dx or x[p].x < dx or x[p].y < riverbed(x[p].x)[0] or x[p].y > 1.0 - 3 * dx:
             x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth]
             y, normal = riverbed(x[p].x)
             x[p] += [0.0, y]
-            v[p] = [normal.y, -normal.x]
+            v[p] = [normal.y * 2, -normal.x]
             J[p] = 1
             C[p] = ti.Matrix.zero(float, 2, 2)
 
@@ -137,7 +159,7 @@ def init():
         x[p] = [ti.random() * 0.9 + 3 * dx, ti.random() * river_depth]
         y, normal = riverbed(x[p].x)
         x[p] += [0.0, y]
-        v[p] = [normal.y, -normal.x]
+        v[p] = [normal.y * 2, -normal.x]
         J[p] = 1
         C[p] = ti.Matrix.zero(float, 2, 2)
 
@@ -147,7 +169,7 @@ precompute_riverbed_points()
 riverbed_points = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=1)
 gui = ti.GUI("MPM88")
 while gui.running and not gui.get_event(gui.ESCAPE):
-    for s in range(50*res_level):
+    for s in range(50 * res_level):
         substep()
     gui.clear(0x112F41)
     gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
