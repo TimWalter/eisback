@@ -170,7 +170,7 @@ while gui.running and not gui.get_event(gui.ESCAPE):
             deepest_point_x_slider.value,
             ground_transition_y_slider.value,)
     riverbed_points = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=1)
-    for _ in range(50):
+    for s in range(50*res_level):
         substep(
             inflow_rate_slider.value,
             parabola_a_slider.value,
