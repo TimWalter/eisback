@@ -175,7 +175,7 @@ def normalized_v_vector():
         grid_v_normalized[i,j] = ti.cast(ti.abs(grid_v[i,j]) / max_scalar, ti.u8)
 
 
-gui = ti.GUI("MPM88")
+gui = ti.GUI("MPM88", res=(1280,1280))
 gui2 = ti.GUI("Mass", res=(int(n_grid.x) + 2, int(n_grid.y) + 2), fast_gui=False)
 gui3 = ti.GUI("Velocity", res=(int(n_grid.x) + 2, int(n_grid.y) + 2), fast_gui=False)
 toggle = True
