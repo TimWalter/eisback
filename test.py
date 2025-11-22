@@ -37,7 +37,6 @@ J = ti.field(float, n_particles)
 grid_v = ti.Vector.field(2, float, (n_grid.x + 2, n_grid.y + 2))
 grid_m = ti.field(float, (n_grid.x + 2, n_grid.y + 2))
 
-
 @ti.func
 def riverbed(x):
     """Returns the y-coordinate of the riverbed at position x, and the normal vector."""
@@ -146,23 +145,62 @@ riverbed_points = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=
 gui = ti.GUI("MPM88", (1280, 1280))
 gui2 = ti.GUI("Mass", res=(int(n_grid.x) + 2, int(n_grid.y) + 2))
 gui3 = ti.GUI("Velocity", res=(int(n_grid.x) + 2, int(n_grid.y) + 2))
+# Output fields for normalized_m and v, only for plotting
+grid_m_normalized = ti.field(ti.u8, (int(n_grid.x) + 2, int(n_grid.y) + 2))
+grid_v_normalized = ti.Vector.field(2, ti.u8, (int(n_grid.x) + 2, int(n_grid.y) + 2))
+
+@ti.kernel
+def normalized_m_scalar():
+    max_scalar = 0.0
+
+    # First pass: find max
+    for i, j in grid_m:
+        max_scalar = ti.atomic_max(max_scalar, grid_m[i,j])
+
+    # Second pass: normalize
+    for i, j in grid_m:
+        grid_m_normalized[i,j] = ti.cast(grid_m[i,j] / max_scalar, ti.u8)
+
+
+@ti.kernel
+def normalized_v_vector():
+    max_scalar = 0.0
+
+    # First pass: find max magnitude
+    for i, j in grid_v:
+        max_scalar = ti.atomic_max(max_scalar, tm.length(grid_v[i,j]))
+
+    # Second pass: normalize
+    for i, j in grid_v:
+        grid_v_normalized[i,j] = ti.cast(ti.abs(grid_v[i,j]) / max_scalar, ti.u8)
+
+
+gui = ti.GUI("MPM88")
+gui2 = ti.GUI("Mass", res=(int(n_grid.x) + 2, int(n_grid.y) + 2), fast_gui=False)
+gui3 = ti.GUI("Velocity", res=(int(n_grid.x) + 2, int(n_grid.y) + 2), fast_gui=False)
 toggle = True
 while gui.running and not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
     if gui.is_pressed(ti.GUI.SPACE):
         toggle = False
         for s in range(10):
             substep()
-        gui2.clear(0x000000)
-        gui3.clear(0x000000)
-        gui2.set_image((grid_m.to_numpy() * 255).astype(np.uint8))
-        gui3.set_image((np.linalg.norm(grid_v.to_numpy(), axis=-1) * 255).astype(np.uint8))
-        gui2.show()
-        gui3.show()
-        print("detected")
+        print("total_mass", np.sum(grid_m.to_numpy()))
     if not gui.is_pressed(ti.GUI.SPACE):
         toggle = True
+
     gui.clear(0x000000)
+    gui2.clear(0x000000)
+    gui3.clear(0x000000)
+    gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
     gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
     gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
 
+
+    normalized_m_scalar()
+    normalized_v_vector()
+    gui2.set_image(grid_m_normalized)
+    gui3.set_image(grid_v_normalized)
+
     gui.show()
+    gui2.show()
+    gui3.show()
