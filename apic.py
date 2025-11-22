@@ -215,16 +215,12 @@ def set_3d():
 
 window = ti.ui.Window("Test for Drawing 3d-lines", (768, 768))
 canvas = window.get_canvas()
-scene = ti.ui.Scene()
-camera = ti.ui.Camera()
-camera.position(5, 2, 2)
+canvas.set_image(window.get_image_buffer_as_numpy())
+per_vertex_color = ti.Vector.field(3, ti.f32, shape=n_particles)
+
+color  = (0.0, 0.5, 0.5)
 
 while window.running:
-    camera.track_user_inputs(window, movement_speed=0.03, hold_key=ti.ui.RMB)
-    scene.set_camera(camera)
-    scene.ambient_light((0.8, 0.8, 0.8))
-    scene.point_light(pos=(0.5, 1.5, 1.5), color=(1, 1, 1))
-
     for s in range(50 * res_level):
         substep(
             inflow_rate_slider.value,
@@ -232,16 +228,9 @@ while window.running:
             deepest_point_x_slider.value,
             ground_transition_y_slider.value,
         )
-    set_3d()
+    # set_3d()
 
-    scene.particles(particles_pos, color = (0.68, 0.26, 0.19), radius = 0.1)
-    # Here you will get visible part from the 3rd point with (N - 4) points.
-    # scene.lines(points_pos, color = (0.28, 0.68, 0.99), width = 5.0, vertex_count = N - 4, vertex_offset = 2)
-    # Using indices to indicate which vertex to use
-    # scene.lines(points_pos, color = (0.28, 0.68, 0.99), width = 5.0, indices = points_indices)
-    # Case 1, vertex_count will be changed to N - 2 when drawing.
-    # scene.lines(points_pos, color = (0.28, 0.68, 0.99), width = 5.0, vertex_count = N - 1, vertex_offset = 0)
-    # Case 2, vertex_count will be changed to N - 2 when drawing.
-    # scene.lines(points_pos, color = (0.28, 0.68, 0.99), width = 5.0, vertex_count = N, vertex_offset = 2)
-    canvas.scene(scene)
+    radius = 5
+    canvas.circles(x, radius, color, per_vertex_color)
+    # canvas.set_image(window.get_image_buffer_as_numpy())
     window.show()
