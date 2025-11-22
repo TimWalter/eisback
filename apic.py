@@ -3,7 +3,7 @@ import taichi as ti
 import taichi.math as tm
 import numpy as np
 
-ti.init(arch=ti.gpu, debug=False)
+ti.init(arch=ti.gpu, debug=True)
 
 res_level = 2
 n_particles = 8192
@@ -27,25 +27,27 @@ J = ti.field(float, n_particles)
 grid_v = ti.Vector.field(2, float, (n_grid, n_grid))
 grid_m = ti.field(float, (n_grid, n_grid))
 
-parabola_a = 0.5
+parabola_a = 2.5
 deepest_point_x = 0.4
-ground_transition_y = 0.1
-
+ground_transition_x = 0.7
+ground_transition_y = parabola_a * (ground_transition_x - deepest_point_x) ** 2 + 3 * dx
 
 @ti.func
 def riverbed(x):
     """Returns the y-coordinate of the riverbed at position x, and the normal vector."""
-    # Parabolic riverbed profile
-    y = parabola_a * (x - deepest_point_x) ** 2
-    y = ti.min(y, ground_transition_y) + dx * 10
-    # Normal vector calculation
-    dy_dx = 2 * parabola_a * (x - deepest_point_x)
-    normal = tm.vec2(-dy_dx, 1)
+    y = ground_transition_y
+    normal = tm.vec2(0, 1)
+    if x < ground_transition_x:
+        y = parabola_a * (x - deepest_point_x) ** 2 + 3 * dx
+        # Normal vector calculation
+        dy_dx = 2 * parabola_a * (x - deepest_point_x)
+        normal = tm.vec2(-dy_dx, 1)
 
-    normal /= tm.length(normal)
-
-    if y == ground_transition_y + dx * 10:
+        normal /= tm.length(normal)
+    else:
+        y = ground_transition_y
         normal = tm.vec2(0, 1)
+
 
     return y, normal
 
@@ -145,7 +147,7 @@ precompute_riverbed_points()
 riverbed_points = np.stack([riverbed_x.to_numpy(), riverbed_y.to_numpy()], axis=1)
 gui = ti.GUI("MPM88")
 while gui.running and not gui.get_event(gui.ESCAPE):
-    for s in range(50):
+    for s in range(50*res_level):
         substep()
     gui.clear(0x112F41)
     gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
