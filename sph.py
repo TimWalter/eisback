@@ -1,13 +1,20 @@
 import taichi as ti
+import math
+import numpy as np
+import taichi.math as tm
 
-ti.init(arch=ti.gpu, debug=True)
+
+ti.init(arch=ti.gpu)
+
 
 
 # system params
-n_particles = 8192
+n_particles = 10000
 domain_x = 10
-domain.y = 5
-gravity = 9.81
+domain_y = 5
+gravity = 9.81 * 100
+dt = 1e-4
+
 
 # floor
 parabola_a = 2
@@ -15,13 +22,18 @@ parabola_c = 0.1
 deepest_point_x = 4
 ground_transition_y = 1 
 
+
 # water params
-viscosity = 1
+particle_radius = 0.01
+particle_diameter = 2 * particle_radius
+dx = particle_diameter
+viscosity_mu = 0.00000001
+
 rho0 = 1000 # kg/m^3
-c0 = 50 # [m/s] speed of sound in (our) water 
-interaction_radius = 0.1
+c0 = 40 # [m/s] speed of sound in (our) water 
+interaction_radius = dx * 4.0
 interaction_radius_sq = interaction_radius ** 2
-mass = 1 
+mass = dx * dx * rho0
 
 # kernel
 h = interaction_radius
@@ -38,6 +50,7 @@ B = c0*c0*rho0/gamma
 x = ti.Vector.field(2, float, n_particles) # positions
 v = ti.Vector.field(2, float, n_particles) # velocities
 f = ti.Vector.field(2, float, n_particles) # forces
+f_old = ti.Vector.field(2, float, n_particles) # old_forces
 p = ti.field(float, n_particles) # pressure
 d = ti.field(float, n_particles) # density
 
@@ -90,18 +103,33 @@ def spiky_gradient(r, r_len, h):
 
 # convert desnity to pressure 
 @ti.func
-def tait_pressure(rho, rho0, c0, gamma):
-    B = c0 * c0 * rho0 / gamma
+def tait_pressure(rho, rho0, c0, gamma, B):
     return B * ((rho / rho0)**gamma - 1.0)
 
 
 
+
+@ti.kernel
+def init():
+    for p in range(n_particles):
+        x[p] = [ti.random() * domain_x / 5, ti.random() * domain_y / 2] 
+        # x[p] += [0.0, riverbed(x[p].x)[0]]
+        # v[p] = [1.0, 0]
+        # J[p] = 1
+        # C[p] = ti.Matrix.zero(float, 2, 2)
+
+
 @ti.kernel
 def force_update():
+    # 0. pass store old forces
+    for i in range(n_particles):
+        f_old[i] = f[i]      # copy force
+        f[i] = ti.Vector([0.0, 0.0])   # reset force
+   
     # 1. pass: density calcualtion
-    for i in x:
+    for i in range(n_particles):
         d[i] = 0.0
-        for j in x:
+        for j in range(n_particles):
             r = x[i] - x[j]
             r_sq = r.norm_sqr()
             if r_sq < h_sq:
@@ -110,45 +138,90 @@ def force_update():
         # avoid division by 0 if density is too low (recommended by gemini)
         d[i] = ti.max(d[i], mass * POLY6_2D_CONST * h_sq**3)
 
-    # 2. pass: force calculation
+    # 2. pass: pressure compute
     for i in x:
-        p[i] = tait_pressure(d[i], rho0, gamma, B)
+        p[i] = tait_pressure(d[i], rho0, c0, gamma, B)
+
+    # 3. pass: force calculation
+    for i in range(n_particles):
         f[i] = ti.Vector([0.0, -gravity])
 
-        for j in x:
+        for j in range(n_particles):
             r = x[i] - x[j]
             r_len = r.norm()
 
             if 0 < r_len < interaction_radius:
+                # SPH Force Formula: F = -mi * mj * (Pi/rhoi^2 + Pj/rhoj^2) * GradW
 
-                pressure_term = (p[i] / (d[i]**2)) + (p[j] / (d[j]**2))
-                f_pressure = -mass * pressure_term * spiky_gradient(r, r_len, interaction_radius)
+                term_i = p[i] / (d[i] * d[i])
+                term_j = p[j] / (d[j] * d[j])
 
+                f_pressure = -mass * mass * (term_i + term_j) * spiky_gradient(r, r_len, h)
                 f[i] += f_pressure
 
+                # Viscosity Force
+                v_ij = v[j] - v[i]
+                r_vec = x[i] - x[j]
+                if v_ij.dot(r_vec) < 0:
+                    f_visc = mass * mass * viscosity_mu * v_ij * POLY6_2D_CONST
+                    f[i] += f_visc
 
 
+@ti.kernel
+def apply_boundary_conditions():
+    for i in range(n_particles):
+        if x[i][0] < 0: 
+            x[i][0] = 0
+            v[i][0] = - v[i][0]
+        if x[i][0] > domain_x:
+            x[i][0] = domain_x
+            v[i][0] = - v[i][0]
+        if x[i][1] < 0:
+            x[i][1] = 0
+            v[i][1] = -v[i][1]
 
 
-# 2. Compute Forces (The Pairwise Interaction)
-for i in particles:
-    i.force = gravity
-    # Convert density to pressure (Equation of State)
-    i.pressure = k * (i.density - rest_density) 
+@ti.kernel
+def verlet_pass_1():
+    # 1. Update Position & Apply Boundaries
+    for i in range(n_particles): 
+        acc = f[i] / mass
+        x[i] += v[i] * dt + 0.5 * acc * (dt * dt)
+        
 
-    for 
+@ti.kernel
+def verlet_pass_2():
+    # 2. Update Velocity using Average Acceleration
+    for i in range(n_particles): 
+        acc_avg = (f[i] + f_old[i]) / mass
+        v[i] += 0.5 * acc_avg * dt
+
+
+def velocity_verlet_step(): 
+    verlet_pass_1()
     
-    for j in neighbors_of(i):
-        # Calculate Pressure Force Gradient
-        # Note: We use Gradient of Kernel (GradKernel) here
-        pressure_force = -j.mass * (i.pressure/i.density**2 + j.pressure/j.density**2) * GradKernel(dist, h)
-        
-        # Calculate Viscosity (friction between particles)
-        viscosity_force = viscosity_constant * (j.vel - i.vel) * ...
-        
-        i.force += pressure_force + viscosity_force
+    apply_boundary_conditions()
+    force_update()
+    
+    verlet_pass_2()
 
-# 3. Integration (Move particles)
-for i in particles:
-    i.vel += i.force / i.mass * dt
-    i.pos += i.vel * dt
+
+
+gui = ti.GUI("MPM88", res=(800,700))
+init()
+
+while gui.running and not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
+
+    for s in range(50):
+        velocity_verlet_step()
+    gui.clear(0x000000)
+
+    pos_np = x.to_numpy()
+    pos_np[:, 0] /= domain_x
+    pos_np[:, 1] /= domain_y
+
+    gui.circles(pos_np, radius=2, color=0x068587)
+    # gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
+    # gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
+
+    gui.show()
