@@ -5,10 +5,11 @@ import numpy as np
 
 ti.init(arch=ti.gpu, debug=False)
 
+res_level = 2
 n_particles = 8192
-n_grid = 128
+n_grid = 128 * res_level
 dx = 1 / n_grid
-dt = 2e-4
+dt = 2e-4 / res_level
 
 p_rho = 1
 p_vol = (dx * 0.5) ** 2
