@@ -2,9 +2,9 @@ import taichi as ti
 import taichi.math as tm
 import numpy as np
 
-ti.init(arch=ti.gpu, debug=True)
+ti.init(arch=ti.gpu, debug=False)
 
-n_particles = 8192
+n_particles = 80192
 n_grid = tm.vec2(128, 128)
 dp = 1 / n_grid
 dt = 2e-4
@@ -70,7 +70,6 @@ def substep():
         if x[p].y < y_bound_lower:
             # elastic reflection
             v[p] = v[p] - 2 * v[p].dot(normal) * normal
-            print(v[p])
             x_ground = tm.vec2(x[p].x, y_bound_lower)
             leftover_speed = tm.length(v[p]) * dt - tm.length(x[p] - x_ground)
             x[p] = x_ground + v[p] / tm.length(v[p]) * leftover_speed
@@ -210,5 +209,5 @@ while gui.running and not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
     gui3.set_image(grid_v_normalized)
 
     gui.show()
-    gui2.show()
-    gui3.show()
+    # gui2.show()
+    # gui3.show()
