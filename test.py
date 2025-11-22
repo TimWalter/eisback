@@ -1,5 +1,5 @@
+# MPM-MLS in 88 lines of Taichi code, originally created by @yuanming-hu
 import taichi as ti
-import taichi.math as tm
 
 ti.init(arch=ti.gpu)
 
@@ -12,15 +12,7 @@ p_rho = 1
 p_vol = (dx * 0.5) ** 2
 p_mass = p_vol * p_rho
 gravity = 9.8
-
-river_length = 10.0
-river_height = 1.0
-decline = 0.2
-
-
-y_bound_lower = 0
-y_bound_upper = 5
-
+bound = 3
 E = 400
 
 x = ti.Vector.field(2, float, n_particles)
@@ -42,7 +34,7 @@ def substep():
         base = int(Xp - 0.5)
         fx = Xp - base
         w = [0.5 * (1.5 - fx) ** 2, 0.75 - (fx - 1) ** 2, 0.5 * (fx - 0.5) ** 2]
-        stress = -dt * 4 * E * p_vol * (J[p] - 1) / dx**2
+        stress = -dt * 4 * E * p_vol * (J[p] - 1) / dx ** 2
         affine = ti.Matrix([[stress, 0], [0, stress]]) + p_mass * C[p]
         for i, j in ti.static(ti.ndrange(3, 3)):
             offset = ti.Vector([i, j])
@@ -75,7 +67,7 @@ def substep():
             weight = w[i].x * w[j].y
             g_v = grid_v[base + offset]
             new_v += weight * g_v
-            new_C += 4 * weight * g_v.outer_product(dpos) / dx**2
+            new_C += 4 * weight * g_v.outer_product(dpos) / dx ** 2
         v[p] = new_v
         x[p] += dt * v[p]
         J[p] *= 1 + dt * new_C.trace()
@@ -85,8 +77,8 @@ def substep():
 @ti.kernel
 def init():
     for i in range(n_particles):
-        x[i] = [ti.random() * river_length/2 - river_length/2, ti.random() * river_height]
-        v[i] = [0.4, 0]
+        x[i] = [ti.random() * 0.4 + 0.2, ti.random() * 0.4 + 0.2]
+        v[i] = [0, -1]
         J[i] = 1
 
 
