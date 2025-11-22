@@ -16,7 +16,7 @@ p_vol = (dx * 0.5) ** 2
 p_mass = p_vol * p_rho
 gravity = 9.8
 bound = 3
-river_depth = 0.1
+river_depth = 0.2
 E = 400
 
 x = ti.Vector.field(2, float, n_particles)
@@ -28,7 +28,7 @@ grid_v = ti.Vector.field(2, float, (n_grid, n_grid))
 grid_m = ti.field(float, (n_grid, n_grid))
 
 
-gui = ti.GUI("Eisbach")
+gui = ti.GUI("Eisbach", res=(800, 800))
 inflow_rate_slider = gui.slider("inflow_rate", 0.5, 5.0, step=0.1)
 parabola_a_slider = gui.slider("parabola_a", 0.1, 5.0, step=0.1)
 parabola_b_slider = gui.slider("parabola_b", 0.2, 1.0, step=0.01)
