@@ -390,11 +390,11 @@ let main = async () => {
   };
   document.addEventListener("mousedown", mouseDownListener);
   document.addEventListener("mousemove", mouseMoveListener);
-  document.addEventListener("mouseup", mouseupListener);
+  document.addEventListener("mouseup", mouseUpListener);
 
   document.addEventListener("touchstart", mouseDownListener);
   document.addEventListener("touchmove", mouseMoveListener);
-  document.addEventListener("touchend", mouseupListener);
+  document.addEventListener("touchend", mouseUpListener);
 
   const htmlCanvas = document.getElementById("result_canvas");
   htmlCanvas.width = aspect_ratio * img_size;
