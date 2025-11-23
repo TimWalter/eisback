@@ -10,18 +10,18 @@ let main = async () => {
     const n_particles = 9000 * 1;
     const aspect_ratio = 1; 
 
-// We use a simple object to mimic the vector structure
-    const n_grid = { 
-    x: 48 * res_level * aspect_ratio, 
-    y: 48 * res_level 
-    };
+  // We use a simple object to mimic the vector structure
+  const n_grid = {
+    x: 48 * res_level * aspect_ratio,
+    y: 48 * res_level,
+  };
 
-const dx = 1 / n_grid.y;
-const domain_width = n_grid.x * dx;
-const domain_height = n_grid.y * dx;
-const dt = 2e-4 / res_level;
+  const dx = 1 / n_grid.y;
+  const domain_width = n_grid.x * dx;
+  const domain_height = n_grid.y * dx;
+  const dt = 2e-4 / res_level;
 
-  let inv_dx = Math.floor(1/dx)  ;
+  let inv_dx = Math.floor(1 / dx);
   //let dt = 1e-4 / quality;
   let p_vol = (dx * 0.5) ** 2;
   let p_rho = 1;
@@ -61,7 +61,7 @@ const dt = 2e-4 / res_level;
 
   const img_size = 512;
 
-  let image = ti.Vector.field(4, ti.f32, [ aspect_ratio* img_size,  img_size]);
+  let image = ti.Vector.field(4, ti.f32, [aspect_ratio * img_size, img_size]);
   const group_size = n_particles / 3;
 
   // 1. Calculate number of points
@@ -233,7 +233,7 @@ await riverbed_nodes_y.fromArray(y_values_flat);
     kick_h,
     inflow,
     river_depth,
-    aspect_ratio, 
+    aspect_ratio,
     domain_height,
     domain_width, 
     num_points,
@@ -432,7 +432,7 @@ await riverbed_nodes_y.fromArray(y_values_flat);
   });
 
   let render = ti.kernel(() => {
-    for (let I of ndrange( aspect_ratio *  img_size,  img_size)) {
+    for (let I of ndrange(aspect_ratio * img_size, img_size)) {
       image[I] = [0.067, 0.184, 0.255, 1.0];
     }
     for (let i of range(n_particles)) {
@@ -540,11 +540,11 @@ function renderRiverbedOverlay(nodes) {
 
   // document.addEventListener("mousedown", mouseDownListener);
   document.addEventListener("mousemove", mouseMoveListener);
-  // document.addEventListener("mouseup", mouseupListener);
+  //document.addEventListener("mouseup", mouseUpListener);
 
-  // document.addEventListener("touchstart", mouseDownListener);
+  //document.addEventListener("touchstart", mouseDownListener);
   document.addEventListener("touchmove", mouseMoveListener);
-  // document.addEventListener("touchend", mouseupListener);
+  //document.addEventListener("touchend", mouseUpListener);
 
  
   reset();
