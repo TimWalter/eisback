@@ -23,17 +23,20 @@ let main = async () => {
   let grid_v = ti.Vector.field(2, ti.f32, [n_grid, n_grid]);
   let grid_m = ti.field(ti.f32, [n_grid, n_grid]);
 
+  let n_nodes = 10 ; 
+  let scalar_field = Array.from([0,1,2,3,4,5,6,7,8,9]);
+  let scalarField = ti.field(ti.i32, 10);
+
+
   //from slider values: 
   let x_val = 1 ; 
 
 
   let para_a = 1; 
-  let para_a_slider = parseFloat(document.getElementById('para_a').value);
+  const para_a_slider_elm = document.getElementById('para_a')
+  let para_a_slider  = para_a_slider_elm.value; 
 
 
-  const update_labels = () => {
-    para_a_slider = parseFloat(document.getElementById('para_a').value);
-  }
   let para_b = 0.4; 
   let kick_b = 0.2; 
   let kick_h = 0.1; 
@@ -123,20 +126,18 @@ let main = async () => {
     kick_h,
     inflow,
     river_depth, 
-    para_a_slider, 
-    update_labels, 
+
   });
 
 
-  let substep = ti.kernel((para_a_slider) => {
-
-    
-
+  let substep = ti.kernel({f: ti.template()},  (para_a_slider,f ) => {
+    let test = f[0]; 
     for (let I of ti.ndrange(n_grid, n_grid)) {
       grid_v[I] = [0, 0];
       grid_m[I] = 0;
     }
     for (let p of ti.range(n_particles)) {
+      
       let base = i32(x[p] * inv_dx - 0.5);
       let fx = x[p] * inv_dx - f32(base);
       let w = [
@@ -305,12 +306,13 @@ let main = async () => {
   let reset = ti.kernel(() => {
     for (let i of range(n_particles)) {
       let group_id = i32(ti.floor(i / group_size));
-
+    
       x[i] = [
         ti.random() * 0.2 + 0.3 ,
         ti.random() * 0.2 + 0.4 ,
       ];
-      material[i] = 0 // group_id;
+      material[i] = 0 ;
+      //f[i] = 0 ; 
       v[i] = [0, 0];
       F[i] = [
         [1, 0],
@@ -354,12 +356,15 @@ let main = async () => {
   async function frame() {
      
      
+await scalarField.fromArray([0,1,2,3,4,5,6,7,8,9])
     
     if (window.shouldStop) {
       return;
     }
+    const a = parseFloat(para_a_slider_elm.value);
+    //f.from_array
     for (let i = 0; i < Math.floor(2e-3 / dt); ++i) {
-      substep(parseFloat(document.getElementById('para_a').value));
+      substep(a, scalarField);
     }
     
     render();
