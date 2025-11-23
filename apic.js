@@ -8,7 +8,7 @@ let main = async () => {
 
     const res_level = 1;
     const n_particles = 9000 * 1;
-    const aspect_ratio = 5; 
+    const aspect_ratio = 1; 
 
 // We use a simple object to mimic the vector structure
     const n_grid = { 
@@ -63,6 +63,98 @@ const dt = 2e-4 / res_level;
 
   let image = ti.Vector.field(4, ti.f32, [ aspect_ratio* img_size,  img_size]);
   const group_size = n_particles / 3;
+
+  // 1. Calculate number of points
+let num_points = Math.floor(domain_width * 12);
+let num_nodes = num_points + 1; // +1 to match endpoint=True behavior
+
+// 2. Create the Taichi field
+let riverbed_nodes_y = ti.field(ti.f32, [num_nodes]);
+
+// 3. Generate data arrays
+let y_values_flat = [];     // To send to the GPU (Taichi field)
+let riverbed_nodes = [];    // Normalized coordinates for host/rendering (Numpy replacement)
+
+for (let i = 0; i < num_nodes; i++) {
+    // --- X Calculation ---
+    // Equivalent to: np.linspace(0, domain_width, ...)
+    let raw_x = (i / num_points) * domain_width;
+
+    // --- Y Calculation ---
+    // Equivalent to: domain_height / 2 - np.linspace(0, 0.1, ...)
+    let ramp = (i / num_points) * 0.1;
+    let raw_y = (domain_height / 2) - ramp;
+
+    // Store raw Y for the Taichi field
+    y_values_flat.push(raw_y);
+
+    // Store Normalized [X, Y] for "riverbed_nodes"
+    // Equivalent to: riverbed_nodes[:, 0] /= width; riverbed_nodes[:, 1] /= height
+    riverbed_nodes.push([
+        raw_x / domain_width, 
+        raw_y / domain_height
+    ]);
+}
+
+// 4. Populate the Taichi field
+// Note: fromArray is async in Taichi.js
+await riverbed_nodes_y.fromArray(y_values_flat);
+
+    let riverbed_linear = ti.func((x, riverbed_nodes_y) => {
+        // Assumes num_points, domain_width, and dx are available in scope
+        
+        // Calculate the segment index
+        let i = ti.i32(x * num_points / domain_width); 
+        
+        // Boundary safety (optional but recommended to prevent GPU crashes)
+        // i = ti.max(0, ti.min(i, num_points - 2)); 
+
+        let start_node_y = riverbed_nodes_y[i];
+        let start_node_x = i * (domain_width / num_points);
+        
+        let end_node_y = riverbed_nodes_y[i + 1];
+        let end_node_x = (i + 1) * (domain_width / num_points);
+
+        // Calculate Tangent and Normal for current segment
+        let tangent = [end_node_x - start_node_x, end_node_y - start_node_y];
+        // Rotate 90 degrees: [-y, x]
+        let normal = ti.normalized([-tangent[1], tangent[0]]); 
+
+        // Smooth normals near the start node (Left side)
+        if (ti.abs(x - start_node_x) < dx) {
+            // Check boundary to avoid accessing index -1
+            if (i > 0) { 
+                let prev_node_y = riverbed_nodes_y[i - 1];
+                let prev_node_x = (i - 1) * (domain_width / num_points);
+                
+                let prev_tangent = [start_node_x - prev_node_x, start_node_y - prev_node_y];
+                let prev_normal = ti.normalized([-prev_tangent[1], prev_tangent[0]]);
+                
+                // Average the normals
+                normal = ti.normalized(normal + prev_normal);
+            }
+        } 
+        // Smooth normals near the end node (Right side)
+        else if (ti.abs(x - end_node_x) < dx) {
+            // Check boundary to avoid accessing index out of bounds
+            if (i < num_points - 2) {
+                let next_node_y = riverbed_nodes_y[i + 2];
+                let next_node_x = (i + 2) * (domain_width / num_points);
+                
+                let next_tangent = [next_node_x - end_node_x, next_node_y - end_node_y];
+                let next_normal = ti.normalized([-next_tangent[1], next_tangent[0]]);
+                
+                // Average the normals
+                normal = ti.normalized(normal + next_normal);
+            }
+        }
+
+        // Linear interpolation for height
+        let y = start_node_y + tangent[1] / tangent[0] * (x - start_node_x);
+
+        // Return packed vector: [ Height, Normal.x, Normal.y ]
+        return {y, normal}; //[y, normal[0], normal[1]];
+    });
 
   let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
     let y = 0.0;
@@ -133,6 +225,7 @@ const dt = 2e-4 / res_level;
     group_size,
     bound,
     riverbed,
+    riverbed_linear, 
     para_a,
     para_b,
     kick_a,
@@ -143,10 +236,13 @@ const dt = 2e-4 / res_level;
     aspect_ratio, 
     domain_height,
     domain_width, 
+    num_points,
+    num_nodes,
+
   });
 
   let substep = ti.kernel({ f: ti.template() }, (para_a_slider, f) => {
-    let test = f[0];
+    
     for (let I of ti.ndrange(n_grid.x, n_grid.y)) {
       grid_v[I] = [0, 0];
       grid_m[I] = 0;
@@ -249,8 +345,8 @@ const dt = 2e-4 / res_level;
         }
         // riverbed
         let xi = i * dx;
-        let rb = riverbed(xi, para_a_slider, para_b, kick_b, kick_h, kick_a);
-
+        //let rb = riverbed(xi, para_a_slider, para_b, kick_b, kick_h, kick_a);
+        let rb = riverbed_linear(xi, f); 
         let y_bound = rb.y; // 0.5;
         let normal = rb.normal; // [0, 1];
 
@@ -296,7 +392,7 @@ const dt = 2e-4 / res_level;
 
       // Respawn logic
 
-      let rb = riverbed(x[p][0], para_a_slider, para_b, kick_b, kick_h, kick_a);
+      let rb = riverbed_linear(x[p][0], f);
       let y_limit = rb.y;
       let normal = rb.normal;
 
@@ -354,6 +450,69 @@ const dt = 2e-4 / res_level;
     }
   });
 
+  // Setup outside the loop
+//const overlayCanvas = document.getElementById("overlay_canvas");
+//overlayCanvas.width = aspect_ratio * img_size; 
+//overlayCanvas.height = img_size
+//const ctx = overlayCanvas.getContext("2d");
+//const w = overlayCanvas.width;
+//const h = overlayCanvas.height;
+//const overlay_canvas = new ti.Canvas(overlayCanvas);
+
+// --- Helper to map normalized coordinates (0..1) to screen pixels ---
+const toScreen = (pt) => {
+    // pt is [x, y]. Taichi Y is 0 at bottom, Canvas Y is 0 at top.
+    return {
+        x: pt[0] * w,
+        y: (1.0 - pt[1]) * h 
+    };
+};
+
+// --- The Translation Function ---
+function renderRiverbedOverlay(nodes) {
+    // 1. gui.clear(0x112F41)
+    // Note: Usually the Taichi kernel clears the background. 
+    // If you want this canvas to clear the previous frame's lines:
+    ctx.clearRect(0, 0, w, h); 
+    
+    // Optional: If you want the specific background color from Python:
+    // ctx.fillStyle = "#112F41";
+    // ctx.fillRect(0, 0, w, h);
+
+    if (!nodes || nodes.length === 0) return;
+
+    // 2. gui.lines(..., radius=1.0, color=0xED553B)
+    ctx.strokeStyle = "#ED553B"; // 0xED553B
+    ctx.lineWidth = 2.0;         // radius=1.0 approx width 2
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    ctx.beginPath();
+    let start = toScreen(nodes[0]);
+    ctx.moveTo(start.x, start.y);
+
+    for (let i = 1; i < nodes.length; i++) {
+        let pt = toScreen(nodes[i]);
+        ctx.lineTo(pt.x, pt.y);
+    }
+    ctx.stroke();
+
+    // 3. gui.circles(..., radius=5.0, color=0xED553B)
+    ctx.fillStyle = "#ED553B"; 
+    for (let i = 0; i < nodes.length; i++) {
+        let pt = toScreen(nodes[i]);
+        ctx.beginPath();
+        // arc(x, y, radius, startAngle, endAngle)
+        ctx.arc(pt.x, pt.y, 5.0, 0, 2 * Math.PI); 
+        ctx.fill();
+    }
+}
+
+ const htmlCanvas = document.getElementById("result_canvas");
+  htmlCanvas.width = aspect_ratio * img_size;
+  htmlCanvas.height = img_size;
+  const canvas = new ti.Canvas(htmlCanvas);
+
   const getCanvasNormalizedXY = (event) => {
     var rect = htmlCanvas.getBoundingClientRect();
     if (event.touches) {
@@ -366,16 +525,17 @@ const dt = 2e-4 / res_level;
         x: (event.clientX - rect.left) / rect.width,
         y: 1.0 - (event.clientY - rect.top) / rect.height,
       };
+      
     }
   };
 
   const mouseMoveListener = (event) => {
     canvasCoords = getCanvasNormalizedXY(event);
-    xi = Math.floor(canvasCoords.x / n_nodes);
+    xi = Math.floor(canvasCoords.x * n_nodes);
     if ((xi >= 0) & (xi < n_nodes)) {
       ground_y_values.set([xi], canvasCoords.y);
     }
-    console.log(canvasCoords);
+    console.log(canvasCoords, xi, ground_y_values[xi]);
   };
 
   // document.addEventListener("mousedown", mouseDownListener);
@@ -386,11 +546,7 @@ const dt = 2e-4 / res_level;
   document.addEventListener("touchmove", mouseMoveListener);
   // document.addEventListener("touchend", mouseupListener);
 
-  const htmlCanvas = document.getElementById("result_canvas");
-  htmlCanvas.width = aspect_ratio * img_size;
-  htmlCanvas.height = img_size;
-  const canvas = new ti.Canvas(htmlCanvas);
-
+ 
   reset();
 
   let i = 0;
@@ -409,6 +565,8 @@ const dt = 2e-4 / res_level;
 
     i = i + 1;
     canvas.setImage(image);
+    //renderRiverbedOverlay(riverbed_nodes_y);
+    //overlay_canvas.setImage()
     requestAnimationFrame(frame);
   }
   await frame();
