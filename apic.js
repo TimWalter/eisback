@@ -357,7 +357,7 @@ let main = async () => {
 
   const mouseMoveListener = (event) => {
     canvasCoords = getCanvasNormalizedXY(event);
-    xi = int(canvasCoords.x / n_nodes);
+    xi = Math.floor(canvasCoords.x / n_nodes);
     if ((xi >= 0) & (xi < n_nodes)) {
       ground_y_values.set([xi], canvasCoords.y);
     }
