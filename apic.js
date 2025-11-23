@@ -7,11 +7,12 @@ let main = async () => {
   //let dx = 1 / n_grid;
 
     const res_level = 1;
-    const n_particles = 8192 * 1;
+    const n_particles = 9000 * 1;
+    const aspect_ratio = 5; 
 
 // We use a simple object to mimic the vector structure
     const n_grid = { 
-    x: 48 * res_level * 1 , 
+    x: 48 * res_level * aspect_ratio, 
     y: 48 * res_level 
     };
 
@@ -20,8 +21,8 @@ const domain_width = n_grid.x * dx;
 const domain_height = n_grid.y * dx;
 const dt = 2e-4 / res_level;
 
-  let inv_dx = n_grid;
-  let dt = 1e-4 / quality;
+  let inv_dx = Math.floor(1/dx)  ;
+  //let dt = 1e-4 / quality;
   let p_vol = (dx * 0.5) ** 2;
   let p_rho = 1;
   let p_mass = p_vol * p_rho;
@@ -35,8 +36,8 @@ const dt = 2e-4 / res_level;
   let F = ti.Matrix.field(2, 2, ti.f32, n_particles); // deformation gradient
   let material = ti.field(ti.i32, [n_particles]); // material id
   let Jp = ti.field(ti.f32, [n_particles]); // plastic deformation
-  let grid_v = ti.Vector.field(2, ti.f32, [n_grid, n_grid]);
-  let grid_m = ti.field(ti.f32, [n_grid, n_grid]);
+  let grid_v = ti.Vector.field(2, ti.f32, [n_grid.x, n_grid.y]);
+  let grid_m = ti.field(ti.f32, [n_grid.x, n_grid.y]);
 
   let n_nodes = 10;
   let ground_x_values = [...Array(n_nodes).keys()];
@@ -59,7 +60,8 @@ const dt = 2e-4 / res_level;
   const bound = 3;
 
   const img_size = 512;
-  let image = ti.Vector.field(4, ti.f32, [img_size, img_size]);
+
+  let image = ti.Vector.field(4, ti.f32, [ aspect_ratio* img_size,  img_size]);
   const group_size = n_particles / 3;
 
   let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
@@ -138,11 +140,14 @@ const dt = 2e-4 / res_level;
     kick_h,
     inflow,
     river_depth,
+    aspect_ratio, 
+    domain_height,
+    domain_width, 
   });
 
   let substep = ti.kernel({ f: ti.template() }, (para_a_slider, f) => {
     let test = f[0];
-    for (let I of ti.ndrange(n_grid, n_grid)) {
+    for (let I of ti.ndrange(n_grid.x, n_grid.y)) {
       grid_v[I] = [0, 0];
       grid_m[I] = 0;
     }
@@ -218,23 +223,17 @@ const dt = 2e-4 / res_level;
         }
       }
     }
-    for (let I of ndrange(n_grid, n_grid)) {
+    for (let I of ndrange(n_grid.x, n_grid.y)) {
       let i = I[0];
       let j = I[1];
       if (grid_m[I] > 0) {
         grid_v[I] = (1 / grid_m[I]) * grid_v[I];
         grid_v[I][1] -= dt * 50;
 
-        if (i < 3 && grid_v[I][0] < 0) {
-          //grid_v[I][0] = 0;
-        }
-        if (i > n_grid - 3 && grid_v[I][0] > 0) {
-          //grid_v[I][0] = 0;
-        }
         if (j < 3 && grid_v[I][1] < 0) {
           grid_v[I][1] = 0;
         }
-        if (j > n_grid - 3 && grid_v[I][1] > 0) {
+        if (j > n_grid.y - 3 && grid_v[I][1] > 0) {
           grid_v[I][1] = 0;
         }
 
@@ -245,7 +244,7 @@ const dt = 2e-4 / res_level;
           grid_v[I][0] = inflow;
         }
         // Outflow
-        if (i > n_grid - bound && grid_v[I][0] > 0) {
+        if (i > n_grid.x - bound && grid_v[I][0] > 0) {
           grid_v[I][0] = inflow;
         }
         // riverbed
@@ -255,7 +254,7 @@ const dt = 2e-4 / res_level;
         let y_bound = rb.y; // 0.5;
         let normal = rb.normal; // [0, 1];
 
-        let y_j = ti.i32(y_bound * n_grid - 0.5) + 1;
+        let y_j = ti.i32(y_bound * n_grid.y - 0.5) + 1;
 
         let normal_component = grid_v[I].dot(normal);
 
@@ -264,7 +263,7 @@ const dt = 2e-4 / res_level;
         }
 
         // Ceiling (prevent flying too high)
-        if (j > n_grid - bound && grid_v[I].y > 0) {
+        if (j > n_grid.y - bound && grid_v[I].y > 0) {
           grid_v[I].y = 0;
         }
       }
@@ -302,10 +301,10 @@ const dt = 2e-4 / res_level;
       let normal = rb.normal;
 
       if (
-        x[p][0] > 1.0 - 3 * dx ||
+        x[p][0] > domain_width - 3 * dx ||
         x[p][0] < dx ||
         x[p][1] < y_limit ||
-        x[p][1] > 1.0 - 3 * dx
+        x[p][1] > domain_height - 3 * dx
       ) {
         x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth];
         x[p] += [0.0, y_limit];
@@ -337,7 +336,7 @@ const dt = 2e-4 / res_level;
   });
 
   let render = ti.kernel(() => {
-    for (let I of ndrange(img_size, img_size)) {
+    for (let I of ndrange( aspect_ratio *  img_size,  img_size)) {
       image[I] = [0.067, 0.184, 0.255, 1.0];
     }
     for (let i of range(n_particles)) {
@@ -388,7 +387,7 @@ const dt = 2e-4 / res_level;
   // document.addEventListener("touchend", mouseupListener);
 
   const htmlCanvas = document.getElementById("result_canvas");
-  htmlCanvas.width = img_size;
+  htmlCanvas.width = aspect_ratio * img_size;
   htmlCanvas.height = img_size;
   const canvas = new ti.Canvas(htmlCanvas);
 
