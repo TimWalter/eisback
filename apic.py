@@ -1,4 +1,3 @@
-# MPM-MLS in 88 lines of Taichi code, originally created by @yuanming-hu
 import taichi as ti
 import taichi.math as tm
 import numpy as np
@@ -54,6 +53,20 @@ def riverbed(x, riverbed_nodes_y):
 
     tangent = ti.Vector([end_node_x - start_node_x, end_node_y - start_node_y])
     normal = ti.Vector([-tangent.y, tangent.x]).normalized()
+
+    if ti.abs(x - start_node_x) < dx:
+        prev_node_y = riverbed_nodes_y[i - 1]
+        prev_node_x = (i - 1) * (domain_width / num_points)
+        prev_tangent = ti.Vector([start_node_x - prev_node_x, start_node_y - prev_node_y])
+        normal += ti.Vector([-prev_tangent.y, prev_tangent.x]).normalized()
+        normal = normal.normalized()
+    elif ti.abs(x - end_node_x) < dx:
+        next_node_y = riverbed_nodes_y[i + 2]
+        next_node_x = (i + 2) * (domain_width / num_points)
+        next_tangent = ti.Vector([next_node_x - end_node_x, next_node_y - end_node_y])
+        normal += ti.Vector([-next_tangent.y, next_tangent.x]).normalized()
+        normal = normal.normalized()
+
 
     y = start_node_y + tangent.y / tangent.x * (x - start_node_x)
 
@@ -123,6 +136,7 @@ def substep(inflow: float, riverbed_nodes_y: ti.template()):
         y, normal = riverbed(x[p].x, riverbed_nodes_y)
         if x[p].x > domain_width - 3 * dx or x[p].x < dx or x[p].y < y or x[p].y > domain_height - 3 * dx:
             x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth]
+            y, normal = riverbed(x[p].x, riverbed_nodes_y)
             x[p] += [0.0, y]
             v[p] = [normal.y, -normal.x]
             v[p] *= inflow
