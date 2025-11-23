@@ -6,22 +6,22 @@ let main = async () => {
   //let n_grid = 128 * quality;
   //let dx = 1 / n_grid;
 
-    const res_level = 1;
-    const n_particles = 9000 * 1;
-    const aspect_ratio = 5; 
+  const res_level = 1;
+  const n_particles = 9000 * 1;
+  const aspect_ratio = 5;
 
-// We use a simple object to mimic the vector structure
-    const n_grid = { 
-    x: 48 * res_level * aspect_ratio, 
-    y: 48 * res_level 
-    };
+  // We use a simple object to mimic the vector structure
+  const n_grid = {
+    x: 48 * res_level * aspect_ratio,
+    y: 48 * res_level,
+  };
 
-const dx = 1 / n_grid.y;
-const domain_width = n_grid.x * dx;
-const domain_height = n_grid.y * dx;
-const dt = 2e-4 / res_level;
+  const dx = 1 / n_grid.y;
+  const domain_width = n_grid.x * dx;
+  const domain_height = n_grid.y * dx;
+  const dt = 2e-4 / res_level;
 
-  let inv_dx = Math.floor(1/dx)  ;
+  let inv_dx = Math.floor(1 / dx);
   //let dt = 1e-4 / quality;
   let p_vol = (dx * 0.5) ** 2;
   let p_rho = 1;
@@ -61,7 +61,7 @@ const dt = 2e-4 / res_level;
 
   const img_size = 512;
 
-  let image = ti.Vector.field(4, ti.f32, [ aspect_ratio* img_size,  img_size]);
+  let image = ti.Vector.field(4, ti.f32, [aspect_ratio * img_size, img_size]);
   const group_size = n_particles / 3;
 
   let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
@@ -140,9 +140,9 @@ const dt = 2e-4 / res_level;
     kick_h,
     inflow,
     river_depth,
-    aspect_ratio, 
+    aspect_ratio,
     domain_height,
-    domain_width, 
+    domain_width,
   });
 
   let substep = ti.kernel({ f: ti.template() }, (para_a_slider, f) => {
@@ -336,7 +336,7 @@ const dt = 2e-4 / res_level;
   });
 
   let render = ti.kernel(() => {
-    for (let I of ndrange( aspect_ratio *  img_size,  img_size)) {
+    for (let I of ndrange(aspect_ratio * img_size, img_size)) {
       image[I] = [0.067, 0.184, 0.255, 1.0];
     }
     for (let i of range(n_particles)) {
@@ -372,19 +372,29 @@ const dt = 2e-4 / res_level;
   const mouseMoveListener = (event) => {
     canvasCoords = getCanvasNormalizedXY(event);
     xi = Math.floor(canvasCoords.x / n_nodes);
-    if ((xi >= 0) & (xi < n_nodes)) {
-      ground_y_values.set([xi], canvasCoords.y);
+    if (isDragging) {
+      if ((xi >= 0) & (xi < n_nodes)) {
+        ground_y_values.set([xi], canvasCoords.y);
+      }
+      console.log(canvasCoords);
     }
-    console.log(canvasCoords);
   };
 
-  // document.addEventListener("mousedown", mouseDownListener);
-  document.addEventListener("mousemove", mouseMoveListener);
-  // document.addEventListener("mouseup", mouseupListener);
+  let isDragging = false;
+  const mouseDownListener = (event) => {
+    isDragging = true;
+  };
 
-  // document.addEventListener("touchstart", mouseDownListener);
+  const mouseUpListener = (event) => {
+    isDragging = false;
+  };
+  document.addEventListener("mousedown", mouseDownListener);
+  document.addEventListener("mousemove", mouseMoveListener);
+  document.addEventListener("mouseup", mouseupListener);
+
+  document.addEventListener("touchstart", mouseDownListener);
   document.addEventListener("touchmove", mouseMoveListener);
-  // document.addEventListener("touchend", mouseupListener);
+  document.addEventListener("touchend", mouseupListener);
 
   const htmlCanvas = document.getElementById("result_canvas");
   htmlCanvas.width = aspect_ratio * img_size;
