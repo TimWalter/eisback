@@ -532,11 +532,23 @@ function renderRiverbedOverlay(nodes) {
   const mouseMoveListener = (event) => {
     canvasCoords = getCanvasNormalizedXY(event);
     xi = Math.floor(canvasCoords.x * n_nodes);
-    if ((xi >= 0) & (xi < n_nodes)) {
+    if ((xi >= 0) && (xi < n_nodes) && isMouseDown ) {
       ground_y_values.set([xi], canvasCoords.y);
+    }
+    if(isMouseDown){
+        console.log("touched");
     }
     console.log(canvasCoords, xi, ground_y_values[xi]);
   };
+
+  let isMouseDown = false;
+  document.addEventListener("mousedown", () => {
+    isMouseDown = true; // The mouse is now DOWN
+    // Start drawing/dragging logic here if needed
+});
+document.addEventListener("mouseup", () => {
+    isMouseDown = false; // The mouse is now UP
+});
 
   // document.addEventListener("mousedown", mouseDownListener);
   document.addEventListener("mousemove", mouseMoveListener);
