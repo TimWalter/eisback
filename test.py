@@ -1,6 +1,7 @@
 import taichi as ti
 import taichi.math as tm
 import numpy as np
+import os 
 
 ti.init(arch=ti.gpu, debug=False)
 
@@ -186,11 +187,14 @@ def normalized_v_vector():
     for i, j in grid_v:
         grid_v_normalized[i,j] = ti.cast(ti.abs(grid_v[i,j]) / max_scalar, ti.u8)
 
+SAVE = True
+output_dir = "output"
 
 gui = ti.GUI("MPM88", res=(1280,1280))
 gui2 = ti.GUI("Mass", res=(int(n_grid.x) + 2, int(n_grid.y) + 2), fast_gui=False)
 gui3 = ti.GUI("Velocity", res=(int(n_grid.x) + 2, int(n_grid.y) + 2), fast_gui=False)
 toggle = True
+frame_id = 0
 while gui.running and not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
     for s in range(50):
         substep()
@@ -200,7 +204,22 @@ while gui.running and not gui.get_event(ti.GUI.ESCAPE, ti.GUI.EXIT):
     gui3.clear(0x000000)
     gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
     gui.circles(riverbed_points, radius=2.0, color=0xED553B)  # Draw riverbed
-    gui.circles(x.to_numpy(), radius=1.5, color=0x068587)
+
+    if SAVE:
+        x_np = x.to_numpy()
+        v_np = v.to_numpy()
+        C_np = C.to_numpy()
+
+        x_flat = x_np.astype(np.float32)
+        v_flat = v_np.astype(np.float32)
+        C_flat = C_np.astype(np.float32) 
+
+        x_flat.tofile(os.path.join(output_dir, f'pos_{frame_id:05d}.bin'))
+        v_flat.tofile(os.path.join(output_dir, f'vel_{frame_id:05d}.bin'))
+        C_flat.tofile(os.path.join(output_dir, f'C_{frame_id:05d}.bin'))
+        
+        print(f"Saved frame {frame_id}")
+        frame_id += 1
 
 
     normalized_m_scalar()

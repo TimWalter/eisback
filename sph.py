@@ -9,12 +9,12 @@ ti.init(arch=ti.gpu)
 
 
 # system params
-particles_x = 100
-particles_y = 150
+particles_x = 200
+particles_y = 50
 n_particles = particles_x * particles_y
 domain_x = 10
 domain_y = 10
-gravity = 9.81 * 5
+gravity = 9.81 * 10
 dt = 1e-4
 
 
@@ -26,7 +26,7 @@ ground_transition_y = 1
 
 
 # water params
-particle_radius = 0.01
+particle_radius = 0.02
 particle_diameter = 2 * particle_radius
 dx = particle_diameter
 viscosity_mu = 0.005
@@ -125,7 +125,7 @@ def init():
         for j in range(particles_y):
 
             x[i * particles_y + j] = [i * dx, j * dx]
-            v[i * particles_y + j] = [0.01 * (ti.random() - 0.5 + 5), 0.01 * (ti.random() - 0.5) + 1]
+            v[i * particles_y + j] = [0.01 * (ti.random() - 0.5) + 10, 0.01 * (ti.random() - 0.5) + 1]
 
 
     # for p in range(n_particles):
@@ -191,6 +191,7 @@ def apply_boundary_conditions():
             # v[i][1] *=0.9 
         if x[i][0] > domain_x:
             x[i][0] = 0
+            v[i][0] = 10
             # v[i][0] = - v[i][0]
             # v[i][1] *=0.9 
         if x[i][1] < 0:
