@@ -24,8 +24,8 @@ let main = async () => {
   let grid_m = ti.field(ti.f32, [n_grid, n_grid]);
 
   let n_nodes = 10 ; 
-  let scalar_field = Array.from([0,1,2,3,4,5,6,7,8,9]);
-  let scalarField = ti.field(ti.i32, 10);
+  let ground_x_values = [...Array(n_nodes).keys()];
+  let ground_y_values = ti.field(ti.f32, n_nodes);
 
 
   //from slider values: 
@@ -34,7 +34,6 @@ let main = async () => {
 
   let para_a = 1; 
   const para_a_slider_elm = document.getElementById('para_a')
-  let para_a_slider  = para_a_slider_elm.value; 
 
 
   let para_b = 0.4; 
@@ -45,11 +44,11 @@ let main = async () => {
   let inflow = 10; 
   let river_depth = 0.5 ; 
 
-  let bound = 3; 
+  const bound = 3; 
 
-  let img_size = 512;
+  const img_size = 512;
   let image = ti.Vector.field(4, ti.f32, [img_size, img_size]);
-  let group_size = n_particles / 3;
+  const group_size = n_particles / 3;
 
     let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
     let y = 0.0;
@@ -126,11 +125,10 @@ let main = async () => {
     kick_h,
     inflow,
     river_depth, 
-
   });
 
 
-  let substep = ti.kernel({f: ti.template()},  (para_a_slider,f ) => {
+  let substep = ti.kernel({f: ti.template()},  (para_a_slider, f) => {
     let test = f[0]; 
     for (let I of ti.ndrange(n_grid, n_grid)) {
       grid_v[I] = [0, 0];
@@ -345,26 +343,60 @@ let main = async () => {
     }
   });
 
-  let htmlCanvas = document.getElementById('result_canvas');
+
+  const getCanvasNormalizedXY = (event) => {
+    var rect = htmlCanvas.getBoundingClientRect();
+    if (event.touches) {
+      return {
+        x: (event.touches[0].clientX - rect.left)/rect.width,
+        y: (event.touches[0].clientY - rect.top)/rect.height,
+      };
+    } else {
+      return {
+        x: (event.clientX - rect.left)/rect.width,
+        y: (event.clientY - rect.top)/rect.height,
+      };
+    }
+  };
+
+  const mouseMoveListener = (event) => {
+    canvasCoords = getCanvasNormalizedXY(event);
+    xi = int(canvasCoords.x/n_nodes)
+    if (xi>=0 & xi < n_nodes){
+      ground_y_values.set([xi], canvasCoords.y)
+    }
+    console.log(canvasCoords)
+  }
+
+  // document.addEventListener("mousedown", mouseDownListener);
+  document.addEventListener("mousemove", mouseMoveListener);
+  // document.addEventListener("mouseup", mouseupListener);
+
+  // document.addEventListener("touchstart", mouseDownListener);
+  document.addEventListener("touchmove", mouseMoveListener);
+  // document.addEventListener("touchend", mouseupListener);
+
+
+  const htmlCanvas = document.getElementById('result_canvas');
   htmlCanvas.width = img_size;
   htmlCanvas.height = img_size;
-  let canvas = new ti.Canvas(htmlCanvas);
+  const canvas = new ti.Canvas(htmlCanvas);
 
   reset();
 
+
+  htmlCanvas.addEventListener(type, listener)
   let i = 0;
   async function frame() {
-     
-     
-await scalarField.fromArray([0,1,2,3,4,5,6,7,8,9])
-    
+  
     if (window.shouldStop) {
       return;
     }
+
     const a = parseFloat(para_a_slider_elm.value);
     //f.from_array
     for (let i = 0; i < Math.floor(2e-3 / dt); ++i) {
-      substep(a, scalarField);
+      substep(a, ground_y_values);
     }
     
     render();
