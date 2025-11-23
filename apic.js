@@ -2,9 +2,24 @@ let main = async () => {
   await ti.init();
 
   let quality = 1;
-  let n_particles = 9000 * quality ** 2;
-  let n_grid = 128 * quality;
-  let dx = 1 / n_grid;
+  //let n_particles = 9000 * quality ** 2;
+  //let n_grid = 128 * quality;
+  //let dx = 1 / n_grid;
+
+    const res_level = 1;
+    const n_particles = 8192 * 1;
+
+// We use a simple object to mimic the vector structure
+    const n_grid = { 
+    x: 48 * res_level * 1 , 
+    y: 48 * res_level 
+    };
+
+const dx = 1 / n_grid.y;
+const domain_width = n_grid.x * dx;
+const domain_height = n_grid.y * dx;
+const dt = 2e-4 / res_level;
+
   let inv_dx = n_grid;
   let dt = 1e-4 / quality;
   let p_vol = (dx * 0.5) ** 2;
