@@ -23,72 +23,72 @@ let main = async () => {
   let grid_v = ti.Vector.field(2, ti.f32, [n_grid, n_grid]);
   let grid_m = ti.field(ti.f32, [n_grid, n_grid]);
 
-  //from slider values: 
-  let x_val = 1 ; 
+  let n_nodes = 10;
+  let ground_x_values = [...Array(n_nodes).keys()];
+  let ground_y_values = ti.field(ti.f32, n_nodes);
 
+  //from slider values:
+  let x_val = 1;
 
-  let para_a = 1; 
-  let para_a_slider = parseFloat(document.getElementById('para_a').value);
+  let para_a = 1;
+  const para_a_slider_elm = document.getElementById("para_a");
 
+  let para_b = 0.4;
+  let kick_b = 0.2;
+  let kick_h = 0.1;
+  let kick_a = -10;
 
-  const update_labels = () => {
-    para_a_slider = parseFloat(document.getElementById('para_a').value);
-  }
-  let para_b = 0.4; 
-  let kick_b = 0.2; 
-  let kick_h = 0.1; 
-  let kick_a = -10; 
+  let inflow = 10;
+  let river_depth = 0.5;
 
-  let inflow = 10; 
-  let river_depth = 0.5 ; 
+  const bound = 3;
 
-  let bound = 3; 
-
-  let img_size = 512;
+  const img_size = 512;
   let image = ti.Vector.field(4, ti.f32, [img_size, img_size]);
-  let group_size = n_particles / 3;
+  const group_size = n_particles / 3;
 
-    let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
+  let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
     let y = 0.0;
     let normal = [0.0, 1.0];
-    let parabola_c = 3 * dx; 
-    let ground_transition_x = 0.7; 
+    let parabola_c = 3 * dx;
+    let ground_transition_x = 0.7;
 
     let kicker_c = para_a * (kick_b - para_b) ** 2 + 3 * dx + kick_h;
     let A = kick_a - para_a;
     let B = 2 * (para_a * para_b - kick_a * kick_b);
-    let D = (kick_a * kick_b ** 2 - para_a * para_b ** 2 + kicker_c - parabola_c);
+    let D = kick_a * kick_b ** 2 - para_a * para_b ** 2 + kicker_c - parabola_c;
 
     // Solve quadratic intersection
     let delta = B ** 2 - 4 * A * D;
     // Determine kicker range. Using dummy values if delta < 0 to avoid NaN
     let kicker_start = 0.0;
     let kicker_end = 0.0;
-    
+
     if (delta >= 0) {
-        kicker_start = (-B + ti.sqrt(delta)) / (2 * A);
-        kicker_end = (-B - ti.sqrt(delta)) / (2 * A);
+      kicker_start = (-B + ti.sqrt(delta)) / (2 * A);
+      kicker_end = (-B - ti.sqrt(delta)) / (2 * A);
     }
 
-    let ground_transition_y = para_a * (ground_transition_x - para_b) ** 2 + 3 * dx;
+    let ground_transition_y =
+      para_a * (ground_transition_x - para_b) ** 2 + 3 * dx;
 
     if (x_val > kicker_start && x_val < kicker_end) {
-        y = kick_a * (x_val - kick_b) ** 2 + kicker_c;
-        let dy_dx = 2 * kick_a * (x_val - kick_b);
-        let norm_raw = [-dy_dx, 1.0];
-        normal = ti.normalized(norm_raw);
+      y = kick_a * (x_val - kick_b) ** 2 + kicker_c;
+      let dy_dx = 2 * kick_a * (x_val - kick_b);
+      let norm_raw = [-dy_dx, 1.0];
+      normal = ti.normalized(norm_raw);
     } else if (x_val < ground_transition_x) {
-        y = para_a * (x_val - para_b) ** 2 + parabola_c;
-        let dy_dx = 2 * para_a * (x_val - para_b);
-        let norm_raw = [-dy_dx, 1.0];
-        normal = ti.normalized(norm_raw);
+      y = para_a * (x_val - para_b) ** 2 + parabola_c;
+      let dy_dx = 2 * para_a * (x_val - para_b);
+      let norm_raw = [-dy_dx, 1.0];
+      normal = ti.normalized(norm_raw);
     } else {
-        y = ground_transition_y;
-        normal = [0.0, 1.0];
+      y = ground_transition_y;
+      normal = [0.0, 1.0];
     }
-    
-    return {y, normal}  ;
-            };
+
+    return { y, normal };
+  };
 
   ti.addToKernelScope({
     n_particles,
@@ -115,23 +115,18 @@ let main = async () => {
     img_size,
     group_size,
     bound,
-    riverbed, 
+    riverbed,
     para_a,
     para_b,
     kick_a,
     kick_b,
     kick_h,
     inflow,
-    river_depth, 
-    para_a_slider, 
-    update_labels, 
+    river_depth,
   });
 
-
-  let substep = ti.kernel((para_a_slider) => {
-
-    
-
+  let substep = ti.kernel({ f: ti.template() }, (para_a_slider, f) => {
+    let test = f[0];
     for (let I of ti.ndrange(n_grid, n_grid)) {
       grid_v[I] = [0, 0];
       grid_m[I] = 0;
@@ -176,7 +171,7 @@ let main = async () => {
         sig[[d, d]] = new_sig;
         J = J * new_sig;
       }
-      if (material[p] == 0 ) {
+      if (material[p] == 0) {
         F[p] =
           [
             [1.0, 0.0],
@@ -215,7 +210,6 @@ let main = async () => {
         grid_v[I] = (1 / grid_m[I]) * grid_v[I];
         grid_v[I][1] -= dt * 50;
 
-
         if (i < 3 && grid_v[I][0] < 0) {
           //grid_v[I][0] = 0;
         }
@@ -229,34 +223,34 @@ let main = async () => {
           grid_v[I][1] = 0;
         }
 
-        //Boundary conditions 
-        
+        //Boundary conditions
+
         // Inflow
         if (i < bound && grid_v[I][0] < 0) {
-            grid_v[I][0] = inflow;
+          grid_v[I][0] = inflow;
         }
         // Outflow
         if (i > n_grid - bound && grid_v[I][0] > 0) {
-            grid_v[I][0] = inflow;
+          grid_v[I][0] = inflow;
         }
         // riverbed
         let xi = i * dx;
         let rb = riverbed(xi, para_a_slider, para_b, kick_b, kick_h, kick_a);
-        
-        let y_bound = rb.y; // 0.5; 
-        let normal =  rb.normal; // [0, 1]; 
+
+        let y_bound = rb.y; // 0.5;
+        let normal = rb.normal; // [0, 1];
 
         let y_j = ti.i32(y_bound * n_grid - 0.5) + 1;
 
         let normal_component = grid_v[I].dot(normal);
-        
+
         if (j <= y_j && normal_component < 0) {
-            grid_v[I] -= normal_component * normal;
+          grid_v[I] -= normal_component * normal;
         }
 
         // Ceiling (prevent flying too high)
         if (j > n_grid - bound && grid_v[I].y > 0) {
-            grid_v[I].y = 0;
+          grid_v[I].y = 0;
         }
       }
     }
@@ -287,18 +281,23 @@ let main = async () => {
       x[p] = x[p] + dt * new_v;
 
       // Respawn logic
-       
-        let rb = riverbed(x[p][0], para_a_slider, para_b, kick_b, kick_h, kick_a);
-        let y_limit = rb.y;
-        let normal = rb.normal;
 
-        if (x[p][0] > 1.0 - 3 * dx || x[p][0] < dx || x[p][1] < y_limit || x[p][1] > 1.0 - 3 * dx) {
-            x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth];
-            x[p] += [0.0, y_limit];
-            v[p] = [normal.y * 2, -normal.x];
-            //J[p] = 1.0;
-            //C[p] = [[0.0, 0.0], [0.0, 0.0]];
-        }
+      let rb = riverbed(x[p][0], para_a_slider, para_b, kick_b, kick_h, kick_a);
+      let y_limit = rb.y;
+      let normal = rb.normal;
+
+      if (
+        x[p][0] > 1.0 - 3 * dx ||
+        x[p][0] < dx ||
+        x[p][1] < y_limit ||
+        x[p][1] > 1.0 - 3 * dx
+      ) {
+        x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth];
+        x[p] += [0.0, y_limit];
+        v[p] = [normal.y * 2, -normal.x];
+        //J[p] = 1.0;
+        //C[p] = [[0.0, 0.0], [0.0, 0.0]];
+      }
     }
   });
 
@@ -306,11 +305,9 @@ let main = async () => {
     for (let i of range(n_particles)) {
       let group_id = i32(ti.floor(i / group_size));
 
-      x[i] = [
-        ti.random() * 0.2 + 0.3 ,
-        ti.random() * 0.2 + 0.4 ,
-      ];
-      material[i] = 0 // group_id;
+      x[i] = [ti.random() * 0.2 + 0.3, ti.random() * 0.2 + 0.4];
+      material[i] = 0;
+      //f[i] = 0 ;
       v[i] = [0, 0];
       F[i] = [
         [1, 0],
@@ -343,25 +340,57 @@ let main = async () => {
     }
   });
 
-  let htmlCanvas = document.getElementById('result_canvas');
+  const getCanvasNormalizedXY = (event) => {
+    var rect = htmlCanvas.getBoundingClientRect();
+    if (event.touches) {
+      return {
+        x: (event.touches[0].clientX - rect.left) / rect.width,
+        y: 1.0 - (event.touches[0].clientY - rect.top) / rect.height,
+      };
+    } else {
+      return {
+        x: (event.clientX - rect.left) / rect.width,
+        y: 1.0 - (event.clientY - rect.top) / rect.height,
+      };
+    }
+  };
+
+  const mouseMoveListener = (event) => {
+    canvasCoords = getCanvasNormalizedXY(event);
+    xi = Math.floor(canvasCoords.x / n_nodes);
+    if ((xi >= 0) & (xi < n_nodes)) {
+      ground_y_values.set([xi], canvasCoords.y);
+    }
+    console.log(canvasCoords);
+  };
+
+  // document.addEventListener("mousedown", mouseDownListener);
+  document.addEventListener("mousemove", mouseMoveListener);
+  // document.addEventListener("mouseup", mouseupListener);
+
+  // document.addEventListener("touchstart", mouseDownListener);
+  document.addEventListener("touchmove", mouseMoveListener);
+  // document.addEventListener("touchend", mouseupListener);
+
+  const htmlCanvas = document.getElementById("result_canvas");
   htmlCanvas.width = img_size;
   htmlCanvas.height = img_size;
-  let canvas = new ti.Canvas(htmlCanvas);
+  const canvas = new ti.Canvas(htmlCanvas);
 
   reset();
 
   let i = 0;
   async function frame() {
-     
-     
-    
     if (window.shouldStop) {
       return;
     }
+
+    const a = parseFloat(para_a_slider_elm.value);
+    //f.from_array
     for (let i = 0; i < Math.floor(2e-3 / dt); ++i) {
-      substep(parseFloat(document.getElementById('para_a').value));
+      substep(a, ground_y_values);
     }
-    
+
     render();
 
     i = i + 1;
@@ -372,13 +401,11 @@ let main = async () => {
 };
 // This is just because StackBlitz has some weird handling of external scripts.
 // Normally, you would just use `<script src="https://unpkg.com/taichi.js/dist/taichi.umd.js"></script>` in the HTML
-const script = document.createElement('script');
-script.addEventListener('load', function () {
+const script = document.createElement("script");
+script.addEventListener("load", function () {
   main();
 });
 
-
-
-script.src = 'https://unpkg.com/taichi.js/dist/taichi.umd.js';
+script.src = "https://unpkg.com/taichi.js/dist/taichi.umd.js";
 // Append to the `head` element
 document.head.appendChild(script);
