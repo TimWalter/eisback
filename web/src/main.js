@@ -1,6 +1,6 @@
 import './style.css';
 import { SimulationLoader } from './loader.js';
-import { WaterRenderer } from './renderer.js';
+import { WaterRenderer } from './SSFRRenderer.js';
 
 // 1. SETUP UI
 document.querySelector('#app').innerHTML = `
@@ -20,9 +20,9 @@ document.querySelector('#app').innerHTML = `
 
 // 2. CONFIGURATION
 const CONFIG = {
-    PARTICLE_COUNT: 90000, 
-    RIVER_WIDTH: 0.4,      
-    LAYERS: 30,
+    PARTICLE_COUNT: 20000, 
+    RIVER_WIDTH: 1,      
+    LAYERS: 40,
     PLAYBACK_SPEED: 30 // ms delay between frames
 };
 
