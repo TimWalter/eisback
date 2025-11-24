@@ -2,11 +2,27 @@ let main = async () => {
   await ti.init();
 
   let quality = 1;
-  let n_particles = 9000 * quality ** 2;
-  let n_grid = 128 * quality;
-  let dx = 1 / n_grid;
-  let inv_dx = n_grid;
-  let dt = 1e-4 / quality;
+  //let n_particles = 9000 * quality ** 2;
+  //let n_grid = 128 * quality;
+  //let dx = 1 / n_grid;
+
+    const res_level = 1;
+    const n_particles = 9000 * 1;
+    const aspect_ratio = 1; 
+
+  // We use a simple object to mimic the vector structure
+  const n_grid = {
+    x: 48 * res_level * aspect_ratio,
+    y: 48 * res_level,
+  };
+
+  const dx = 1 / n_grid.y;
+  const domain_width = n_grid.x * dx;
+  const domain_height = n_grid.y * dx;
+  const dt = 2e-4 / res_level;
+
+  let inv_dx = Math.floor(1 / dx);
+  //let dt = 1e-4 / quality;
   let p_vol = (dx * 0.5) ** 2;
   let p_rho = 1;
   let p_mass = p_vol * p_rho;
@@ -20,75 +36,168 @@ let main = async () => {
   let F = ti.Matrix.field(2, 2, ti.f32, n_particles); // deformation gradient
   let material = ti.field(ti.i32, [n_particles]); // material id
   let Jp = ti.field(ti.f32, [n_particles]); // plastic deformation
-  let grid_v = ti.Vector.field(2, ti.f32, [n_grid, n_grid]);
-  let grid_m = ti.field(ti.f32, [n_grid, n_grid]);
+  let grid_v = ti.Vector.field(2, ti.f32, [n_grid.x, n_grid.y]);
+  let grid_m = ti.field(ti.f32, [n_grid.x, n_grid.y]);
 
-  //from slider values: 
-  let x_val = 1 ; 
+  let n_nodes = 10;
+  let ground_x_values = [...Array(n_nodes).keys()];
+  let ground_y_values = ti.field(ti.f32, n_nodes);
 
+  //from slider values:
+  let x_val = 1;
 
-  let para_a = 1; 
-  let para_a_slider = parseFloat(document.getElementById('para_a').value);
+  let para_a = 1;
+  const para_a_slider_elm = document.getElementById("para_a");
 
+  let para_b = 0.4;
+  let kick_b = 0.2;
+  let kick_h = 0.1;
+  let kick_a = -10;
 
-  const update_labels = () => {
-    para_a_slider = parseFloat(document.getElementById('para_a').value);
-  }
-  let para_b = 0.4; 
-  let kick_b = 0.2; 
-  let kick_h = 0.1; 
-  let kick_a = -10; 
+  let inflow = 10;
+  let river_depth = 0.5;
 
-  let inflow = 10; 
-  let river_depth = 0.5 ; 
+  const bound = 3;
 
-  let bound = 3; 
+  const img_size = 512;
 
-  let img_size = 512;
-  let image = ti.Vector.field(4, ti.f32, [img_size, img_size]);
-  let group_size = n_particles / 3;
+  let image = ti.Vector.field(4, ti.f32, [aspect_ratio * img_size, img_size]);
+  const group_size = n_particles / 3;
 
-    let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
+  // 1. Calculate number of points
+let num_points = Math.floor(domain_width * 12);
+let num_nodes = num_points + 1; // +1 to match endpoint=True behavior
+
+// 2. Create the Taichi field
+let riverbed_nodes_y = ti.field(ti.f32, [num_nodes]);
+
+// 3. Generate data arrays
+let y_values_flat = [];     // To send to the GPU (Taichi field)
+let riverbed_nodes = [];    // Normalized coordinates for host/rendering (Numpy replacement)
+
+for (let i = 0; i < num_nodes; i++) {
+    // --- X Calculation ---
+    // Equivalent to: np.linspace(0, domain_width, ...)
+    let raw_x = (i / num_points) * domain_width;
+
+    // --- Y Calculation ---
+    // Equivalent to: domain_height / 2 - np.linspace(0, 0.1, ...)
+    let ramp = (i / num_points) * 0.1;
+    let raw_y = (domain_height / 2) - ramp;
+
+    // Store raw Y for the Taichi field
+    y_values_flat.push(raw_y);
+
+    // Store Normalized [X, Y] for "riverbed_nodes"
+    // Equivalent to: riverbed_nodes[:, 0] /= width; riverbed_nodes[:, 1] /= height
+    riverbed_nodes.push([
+        raw_x / domain_width, 
+        raw_y / domain_height
+    ]);
+}
+
+// 4. Populate the Taichi field
+// Note: fromArray is async in Taichi.js
+await riverbed_nodes_y.fromArray(y_values_flat);
+
+    let riverbed_linear = ti.func((x, riverbed_nodes_y) => {
+        // Assumes num_points, domain_width, and dx are available in scope
+        
+        // Calculate the segment index
+        let i = ti.i32(x * num_points / domain_width); 
+        
+        // Boundary safety (optional but recommended to prevent GPU crashes)
+        // i = ti.max(0, ti.min(i, num_points - 2)); 
+
+        let start_node_y = riverbed_nodes_y[i];
+        let start_node_x = i * (domain_width / num_points);
+        
+        let end_node_y = riverbed_nodes_y[i + 1];
+        let end_node_x = (i + 1) * (domain_width / num_points);
+
+        // Calculate Tangent and Normal for current segment
+        let tangent = [end_node_x - start_node_x, end_node_y - start_node_y];
+        // Rotate 90 degrees: [-y, x]
+        let normal = ti.normalized([-tangent[1], tangent[0]]); 
+
+        // Smooth normals near the start node (Left side)
+        if (ti.abs(x - start_node_x) < dx) {
+            // Check boundary to avoid accessing index -1
+            if (i > 0) { 
+                let prev_node_y = riverbed_nodes_y[i - 1];
+                let prev_node_x = (i - 1) * (domain_width / num_points);
+                
+                let prev_tangent = [start_node_x - prev_node_x, start_node_y - prev_node_y];
+                let prev_normal = ti.normalized([-prev_tangent[1], prev_tangent[0]]);
+                
+                // Average the normals
+                normal = ti.normalized(normal + prev_normal);
+            }
+        } 
+        // Smooth normals near the end node (Right side)
+        else if (ti.abs(x - end_node_x) < dx) {
+            // Check boundary to avoid accessing index out of bounds
+            if (i < num_points - 2) {
+                let next_node_y = riverbed_nodes_y[i + 2];
+                let next_node_x = (i + 2) * (domain_width / num_points);
+                
+                let next_tangent = [next_node_x - end_node_x, next_node_y - end_node_y];
+                let next_normal = ti.normalized([-next_tangent[1], next_tangent[0]]);
+                
+                // Average the normals
+                normal = ti.normalized(normal + next_normal);
+            }
+        }
+
+        // Linear interpolation for height
+        let y = start_node_y + tangent[1] / tangent[0] * (x - start_node_x);
+
+        // Return packed vector: [ Height, Normal.x, Normal.y ]
+        return {y, normal}; //[y, normal[0], normal[1]];
+    });
+
+  let riverbed = (x_val, para_a, para_b, kick_b, kick_h, kick_a) => {
     let y = 0.0;
     let normal = [0.0, 1.0];
-    let parabola_c = 3 * dx; 
-    let ground_transition_x = 0.7; 
+    let parabola_c = 3 * dx;
+    let ground_transition_x = 0.7;
 
     let kicker_c = para_a * (kick_b - para_b) ** 2 + 3 * dx + kick_h;
     let A = kick_a - para_a;
     let B = 2 * (para_a * para_b - kick_a * kick_b);
-    let D = (kick_a * kick_b ** 2 - para_a * para_b ** 2 + kicker_c - parabola_c);
+    let D = kick_a * kick_b ** 2 - para_a * para_b ** 2 + kicker_c - parabola_c;
 
     // Solve quadratic intersection
     let delta = B ** 2 - 4 * A * D;
     // Determine kicker range. Using dummy values if delta < 0 to avoid NaN
     let kicker_start = 0.0;
     let kicker_end = 0.0;
-    
+
     if (delta >= 0) {
-        kicker_start = (-B + ti.sqrt(delta)) / (2 * A);
-        kicker_end = (-B - ti.sqrt(delta)) / (2 * A);
+      kicker_start = (-B + ti.sqrt(delta)) / (2 * A);
+      kicker_end = (-B - ti.sqrt(delta)) / (2 * A);
     }
 
-    let ground_transition_y = para_a * (ground_transition_x - para_b) ** 2 + 3 * dx;
+    let ground_transition_y =
+      para_a * (ground_transition_x - para_b) ** 2 + 3 * dx;
 
     if (x_val > kicker_start && x_val < kicker_end) {
-        y = kick_a * (x_val - kick_b) ** 2 + kicker_c;
-        let dy_dx = 2 * kick_a * (x_val - kick_b);
-        let norm_raw = [-dy_dx, 1.0];
-        normal = ti.normalized(norm_raw);
+      y = kick_a * (x_val - kick_b) ** 2 + kicker_c;
+      let dy_dx = 2 * kick_a * (x_val - kick_b);
+      let norm_raw = [-dy_dx, 1.0];
+      normal = ti.normalized(norm_raw);
     } else if (x_val < ground_transition_x) {
-        y = para_a * (x_val - para_b) ** 2 + parabola_c;
-        let dy_dx = 2 * para_a * (x_val - para_b);
-        let norm_raw = [-dy_dx, 1.0];
-        normal = ti.normalized(norm_raw);
+      y = para_a * (x_val - para_b) ** 2 + parabola_c;
+      let dy_dx = 2 * para_a * (x_val - para_b);
+      let norm_raw = [-dy_dx, 1.0];
+      normal = ti.normalized(norm_raw);
     } else {
-        y = ground_transition_y;
-        normal = [0.0, 1.0];
+      y = ground_transition_y;
+      normal = [0.0, 1.0];
     }
-    
-    return {y, normal}  ;
-            };
+
+    return { y, normal };
+  };
 
   ti.addToKernelScope({
     n_particles,
@@ -115,24 +224,26 @@ let main = async () => {
     img_size,
     group_size,
     bound,
-    riverbed, 
+    riverbed,
+    riverbed_linear, 
     para_a,
     para_b,
     kick_a,
     kick_b,
     kick_h,
     inflow,
-    river_depth, 
-    para_a_slider, 
-    update_labels, 
+    river_depth,
+    aspect_ratio,
+    domain_height,
+    domain_width, 
+    num_points,
+    num_nodes,
+
   });
 
-
-  let substep = ti.kernel((para_a_slider) => {
-
+  let substep = ti.kernel({ f: ti.template() }, (para_a_slider, f) => {
     
-
-    for (let I of ti.ndrange(n_grid, n_grid)) {
+    for (let I of ti.ndrange(n_grid.x, n_grid.y)) {
       grid_v[I] = [0, 0];
       grid_m[I] = 0;
     }
@@ -176,7 +287,7 @@ let main = async () => {
         sig[[d, d]] = new_sig;
         J = J * new_sig;
       }
-      if (material[p] == 0 ) {
+      if (material[p] == 0) {
         F[p] =
           [
             [1.0, 0.0],
@@ -208,55 +319,48 @@ let main = async () => {
         }
       }
     }
-    for (let I of ndrange(n_grid, n_grid)) {
+    for (let I of ndrange(n_grid.x, n_grid.y)) {
       let i = I[0];
       let j = I[1];
       if (grid_m[I] > 0) {
         grid_v[I] = (1 / grid_m[I]) * grid_v[I];
         grid_v[I][1] -= dt * 50;
 
-
-        if (i < 3 && grid_v[I][0] < 0) {
-          //grid_v[I][0] = 0;
-        }
-        if (i > n_grid - 3 && grid_v[I][0] > 0) {
-          //grid_v[I][0] = 0;
-        }
         if (j < 3 && grid_v[I][1] < 0) {
           grid_v[I][1] = 0;
         }
-        if (j > n_grid - 3 && grid_v[I][1] > 0) {
+        if (j > n_grid.y - 3 && grid_v[I][1] > 0) {
           grid_v[I][1] = 0;
         }
 
-        //Boundary conditions 
-        
+        //Boundary conditions
+
         // Inflow
         if (i < bound && grid_v[I][0] < 0) {
-            grid_v[I][0] = inflow;
+          grid_v[I][0] = inflow;
         }
         // Outflow
-        if (i > n_grid - bound && grid_v[I][0] > 0) {
-            grid_v[I][0] = inflow;
+        if (i > n_grid.x - bound && grid_v[I][0] > 0) {
+          grid_v[I][0] = inflow;
         }
         // riverbed
         let xi = i * dx;
-        let rb = riverbed(xi, para_a_slider, para_b, kick_b, kick_h, kick_a);
-        
-        let y_bound = rb.y; // 0.5; 
-        let normal =  rb.normal; // [0, 1]; 
+        //let rb = riverbed(xi, para_a_slider, para_b, kick_b, kick_h, kick_a);
+        let rb = riverbed_linear(xi, f); 
+        let y_bound = rb.y; // 0.5;
+        let normal = rb.normal; // [0, 1];
 
-        let y_j = ti.i32(y_bound * n_grid - 0.5) + 1;
+        let y_j = ti.i32(y_bound * n_grid.y - 0.5) + 1;
 
         let normal_component = grid_v[I].dot(normal);
-        
+
         if (j <= y_j && normal_component < 0) {
-            grid_v[I] -= normal_component * normal;
+          grid_v[I] -= normal_component * normal;
         }
 
         // Ceiling (prevent flying too high)
-        if (j > n_grid - bound && grid_v[I].y > 0) {
-            grid_v[I].y = 0;
+        if (j > n_grid.y - bound && grid_v[I].y > 0) {
+          grid_v[I].y = 0;
         }
       }
     }
@@ -287,18 +391,23 @@ let main = async () => {
       x[p] = x[p] + dt * new_v;
 
       // Respawn logic
-       
-        let rb = riverbed(x[p][0], para_a_slider, para_b, kick_b, kick_h, kick_a);
-        let y_limit = rb.y;
-        let normal = rb.normal;
 
-        if (x[p][0] > 1.0 - 3 * dx || x[p][0] < dx || x[p][1] < y_limit || x[p][1] > 1.0 - 3 * dx) {
-            x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth];
-            x[p] += [0.0, y_limit];
-            v[p] = [normal.y * 2, -normal.x];
-            //J[p] = 1.0;
-            //C[p] = [[0.0, 0.0], [0.0, 0.0]];
-        }
+      let rb = riverbed_linear(x[p][0], f);
+      let y_limit = rb.y;
+      let normal = rb.normal;
+
+      if (
+        x[p][0] > domain_width - 3 * dx ||
+        x[p][0] < dx ||
+        x[p][1] < y_limit ||
+        x[p][1] > domain_height - 3 * dx
+      ) {
+        x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth];
+        x[p] += [0.0, y_limit];
+        v[p] = [normal.y * 2, -normal.x];
+        //J[p] = 1.0;
+        //C[p] = [[0.0, 0.0], [0.0, 0.0]];
+      }
     }
   });
 
@@ -306,11 +415,9 @@ let main = async () => {
     for (let i of range(n_particles)) {
       let group_id = i32(ti.floor(i / group_size));
 
-      x[i] = [
-        ti.random() * 0.2 + 0.3 ,
-        ti.random() * 0.2 + 0.4 ,
-      ];
-      material[i] = 0 // group_id;
+      x[i] = [ti.random() * 0.2 + 0.3, ti.random() * 0.2 + 0.4];
+      material[i] = 0;
+      //f[i] = 0 ;
       v[i] = [0, 0];
       F[i] = [
         [1, 0],
@@ -325,7 +432,7 @@ let main = async () => {
   });
 
   let render = ti.kernel(() => {
-    for (let I of ndrange(img_size, img_size)) {
+    for (let I of ndrange(aspect_ratio * img_size, img_size)) {
       image[I] = [0.067, 0.184, 0.255, 1.0];
     }
     for (let i of range(n_particles)) {
@@ -343,42 +450,146 @@ let main = async () => {
     }
   });
 
-  let htmlCanvas = document.getElementById('result_canvas');
-  htmlCanvas.width = img_size;
-  htmlCanvas.height = img_size;
-  let canvas = new ti.Canvas(htmlCanvas);
+  // Setup outside the loop
+//const overlayCanvas = document.getElementById("overlay_canvas");
+//overlayCanvas.width = aspect_ratio * img_size; 
+//overlayCanvas.height = img_size
+//const ctx = overlayCanvas.getContext("2d");
+//const w = overlayCanvas.width;
+//const h = overlayCanvas.height;
+//const overlay_canvas = new ti.Canvas(overlayCanvas);
 
+// --- Helper to map normalized coordinates (0..1) to screen pixels ---
+const toScreen = (pt) => {
+    // pt is [x, y]. Taichi Y is 0 at bottom, Canvas Y is 0 at top.
+    return {
+        x: pt[0] * w,
+        y: (1.0 - pt[1]) * h 
+    };
+};
+
+// --- The Translation Function ---
+function renderRiverbedOverlay(nodes) {
+    // 1. gui.clear(0x112F41)
+    // Note: Usually the Taichi kernel clears the background. 
+    // If you want this canvas to clear the previous frame's lines:
+    ctx.clearRect(0, 0, w, h); 
+    
+    // Optional: If you want the specific background color from Python:
+    // ctx.fillStyle = "#112F41";
+    // ctx.fillRect(0, 0, w, h);
+
+    if (!nodes || nodes.length === 0) return;
+
+    // 2. gui.lines(..., radius=1.0, color=0xED553B)
+    ctx.strokeStyle = "#ED553B"; // 0xED553B
+    ctx.lineWidth = 2.0;         // radius=1.0 approx width 2
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    ctx.beginPath();
+    let start = toScreen(nodes[0]);
+    ctx.moveTo(start.x, start.y);
+
+    for (let i = 1; i < nodes.length; i++) {
+        let pt = toScreen(nodes[i]);
+        ctx.lineTo(pt.x, pt.y);
+    }
+    ctx.stroke();
+
+    // 3. gui.circles(..., radius=5.0, color=0xED553B)
+    ctx.fillStyle = "#ED553B"; 
+    for (let i = 0; i < nodes.length; i++) {
+        let pt = toScreen(nodes[i]);
+        ctx.beginPath();
+        // arc(x, y, radius, startAngle, endAngle)
+        ctx.arc(pt.x, pt.y, 5.0, 0, 2 * Math.PI); 
+        ctx.fill();
+    }
+}
+
+ const htmlCanvas = document.getElementById("result_canvas");
+  htmlCanvas.width = aspect_ratio * img_size;
+  htmlCanvas.height = img_size;
+  const canvas = new ti.Canvas(htmlCanvas);
+
+  const getCanvasNormalizedXY = (event) => {
+    var rect = htmlCanvas.getBoundingClientRect();
+    if (event.touches) {
+      return {
+        x: (event.touches[0].clientX - rect.left) / rect.width,
+        y: 1.0 - (event.touches[0].clientY - rect.top) / rect.height,
+      };
+    } else {
+      return {
+        x: (event.clientX - rect.left) / rect.width,
+        y: 1.0 - (event.clientY - rect.top) / rect.height,
+      };
+      
+    }
+  };
+
+  const mouseMoveListener = (event) => {
+    canvasCoords = getCanvasNormalizedXY(event);
+    xi = Math.floor(canvasCoords.x * n_nodes);
+    if ((xi >= 0) && (xi < n_nodes) && isMouseDown ) {
+      ground_y_values.set([xi], canvasCoords.y);
+    }
+    if(isMouseDown){
+        console.log("touched");
+    }
+    console.log(canvasCoords, xi, ground_y_values[xi]);
+  };
+
+  let isMouseDown = false;
+  document.addEventListener("mousedown", () => {
+    isMouseDown = true; // The mouse is now DOWN
+    // Start drawing/dragging logic here if needed
+});
+document.addEventListener("mouseup", () => {
+    isMouseDown = false; // The mouse is now UP
+});
+
+  // document.addEventListener("mousedown", mouseDownListener);
+  document.addEventListener("mousemove", mouseMoveListener);
+  //document.addEventListener("mouseup", mouseUpListener);
+
+  //document.addEventListener("touchstart", mouseDownListener);
+  document.addEventListener("touchmove", mouseMoveListener);
+  //document.addEventListener("touchend", mouseUpListener);
+
+ 
   reset();
 
   let i = 0;
   async function frame() {
-     
-     
-    
     if (window.shouldStop) {
       return;
     }
+
+    const a = parseFloat(para_a_slider_elm.value);
+    //f.from_array
     for (let i = 0; i < Math.floor(2e-3 / dt); ++i) {
-      substep(parseFloat(document.getElementById('para_a').value));
+      substep(a, ground_y_values);
     }
-    
+
     render();
 
     i = i + 1;
     canvas.setImage(image);
+    //renderRiverbedOverlay(riverbed_nodes_y);
+    //overlay_canvas.setImage()
     requestAnimationFrame(frame);
   }
   await frame();
 };
 // This is just because StackBlitz has some weird handling of external scripts.
 // Normally, you would just use `<script src="https://unpkg.com/taichi.js/dist/taichi.umd.js"></script>` in the HTML
-const script = document.createElement('script');
-script.addEventListener('load', function () {
+const script = document.createElement("script");
+script.addEventListener("load", function () {
   main();
 });
 
-
-
-script.src = 'https://unpkg.com/taichi.js/dist/taichi.umd.js';
+script.src = "https://unpkg.com/taichi.js/dist/taichi.umd.js";
 // Append to the `head` element
 document.head.appendChild(script);

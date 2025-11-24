@@ -1,13 +1,12 @@
-# MPM-MLS in 88 lines of Taichi code, originally created by @yuanming-hu
 import taichi as ti
 import taichi.math as tm
 import numpy as np
 
 ti.init(arch=ti.gpu, debug=False)
 
-res_level = 2
-n_particles = 8192 * 10
-n_grid = tm.vec2(64 * res_level * 10, 64 * res_level)
+res_level = 1
+n_particles = 8192 * 1
+n_grid = tm.vec2(48 * res_level * 5, 48 * res_level)
 dx = 1 / n_grid.y
 domain_width = n_grid.x * dx
 domain_height = n_grid.y * dx
@@ -22,6 +21,7 @@ river_depth = 0.2
 E = 400
 
 x = ti.Vector.field(2, float, n_particles)
+x_normalized = ti.Vector.field(2, float, n_particles)
 v = ti.Vector.field(2, float, n_particles)
 C = ti.Matrix.field(2, 2, float, n_particles)
 J = ti.field(float, n_particles)
@@ -30,13 +30,18 @@ grid_v = ti.Vector.field(2, float, (n_grid.x, n_grid.y))
 grid_m = ti.field(float, (n_grid.x, n_grid.y))
 
 gui = ti.GUI("Eisbach", res=(3000, 300))
-inflow_rate_slider = gui.slider("inflow_rate", 1.0, 15.0, step=0.1)
+control_gui = ti.GUI("Control Panel", res=(200, 200))
+inflow_rate_slider = control_gui.slider("inflow_rate", 1.0, 15.0, step=0.1)
 inflow_rate_slider.value = 3.5
 
-num_points = int(domain_width*2)
+num_points = int(domain_width * 12)
 riverbed_nodes_x = np.linspace(0, domain_width, num_points + 1, endpoint=True)
 riverbed_nodes_y = ti.field(float, num_points + 1)
-riverbed_nodes_y.from_numpy(domain_height / 2 - np.linspace(0, 0.1, num_points + 1))
+riverbed_nodes_y.from_numpy(np.array(
+    [0.50, 0.50, 0.50, 0.50, 0.49, 0.49, 0.49, 0.49, 0.49, 0.49, 0.47, 0.41, 0.37, 0.35, 0.32, 0.30, 0.29, 0.29, 0.29,
+     0.30, 0.31, 0.33, 0.36, 0.38, 0.48, 0.41, 0.37, 0.36, 0.34, 0.32, 0.32, 0.31, 0.45, 0.44, 0.44, 0.44, 0.44, 0.44,
+     0.44, 0.44, 0.43, 0.43, 0.43, 0.43, 0.43, 0.43, 0.42, 0.42, 0.42, 0.42, 0.42, 0.41, 0.41, 0.41, 0.41, 0.41, 0.41,
+     0.40, 0.40, 0.40, 0.40, ], dtype=np.float32))
 
 riverbed_nodes = np.stack((riverbed_nodes_x, riverbed_nodes_y.to_numpy()), axis=1)
 riverbed_nodes[:, 0] /= domain_width
@@ -53,6 +58,19 @@ def riverbed(x, riverbed_nodes_y):
 
     tangent = ti.Vector([end_node_x - start_node_x, end_node_y - start_node_y])
     normal = ti.Vector([-tangent.y, tangent.x]).normalized()
+
+    if ti.abs(x - start_node_x) < dx:
+        prev_node_y = riverbed_nodes_y[i - 1]
+        prev_node_x = (i - 1) * (domain_width / num_points)
+        prev_tangent = ti.Vector([start_node_x - prev_node_x, start_node_y - prev_node_y])
+        normal += ti.Vector([-prev_tangent.y, prev_tangent.x]).normalized()
+        normal = normal.normalized()
+    elif ti.abs(x - end_node_x) < dx:
+        next_node_y = riverbed_nodes_y[i + 2]
+        next_node_x = (i + 2) * (domain_width / num_points)
+        next_tangent = ti.Vector([next_node_x - end_node_x, next_node_y - end_node_y])
+        normal += ti.Vector([-next_tangent.y, next_tangent.x]).normalized()
+        normal = normal.normalized()
 
     y = start_node_y + tangent.y / tangent.x * (x - start_node_x)
 
@@ -95,6 +113,7 @@ def substep(inflow: float, riverbed_nodes_y: ti.template()):
         normal_component = tm.dot(grid_v[i, j], normal)
         if j <= y_j and normal_component < 0:
             grid_v[i, j] -= normal_component * normal
+            grid_v[i, j] *= 0.99
 
         if j > n_grid.y - bound and grid_v[i, j].y > 0:
             grid_v[i, j].y = 0
@@ -121,6 +140,7 @@ def substep(inflow: float, riverbed_nodes_y: ti.template()):
         y, normal = riverbed(x[p].x, riverbed_nodes_y)
         if x[p].x > domain_width - 3 * dx or x[p].x < dx or x[p].y < y or x[p].y > domain_height - 3 * dx:
             x[p] = [ti.random() * 3 * dx + dx, ti.random() * river_depth]
+            y, normal = riverbed(x[p].x, riverbed_nodes_y)
             x[p] += [0.0, y]
             v[p] = [normal.y, -normal.x]
             v[p] *= inflow
@@ -140,10 +160,15 @@ def init(riverbed_nodes_y: ti.template()):
 
 
 init(riverbed_nodes_y)
-
+start = control_gui.button('start')
+stop = control_gui.button('stop')
+save = control_gui.button('save')
+score = control_gui.label('score')
+running = False
 while gui.running and not gui.get_event(gui.ESCAPE):
-    for s in range(50 * res_level):
-        substep(inflow_rate_slider.value, riverbed_nodes_y) # TODO make into kernel and static
+    if running:
+        for s in range(200 * res_level):
+            substep(inflow_rate_slider.value, riverbed_nodes_y)
 
     # Render riverbed nodes
     gui.clear(0x112F41)
@@ -153,7 +178,7 @@ while gui.running and not gui.get_event(gui.ESCAPE):
     particle_vis = x.to_numpy()
     particle_vis[:, 0] /= domain_width
     particle_vis[:, 1] /= domain_height
-    gui.circles(particle_vis, radius=1.5, color=0x068587)
+    gui.circles(particle_vis, radius=2.5, color=0x068587)
 
     if gui.is_pressed(ti.GUI.LMB):
         mouse_x, mouse_y = gui.get_cursor_pos()
@@ -161,4 +186,16 @@ while gui.running and not gui.get_event(gui.ESCAPE):
         riverbed_nodes_y[idx] = mouse_y * domain_height
         riverbed_nodes[idx, 1] = riverbed_nodes_y[idx] / domain_height
 
+    for e in control_gui.get_events():
+        if e.key == save:
+            print_str = ""
+            for i in range(num_points + 1):
+                print_str += f"{riverbed_nodes_y[i]:.2f}, "
+            print(print_str)
+
+        if e.key == start:
+            running = True
+        if e.key == stop:
+            running = False
     gui.show()
+    control_gui.show()
